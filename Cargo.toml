@@ -1,0 +1,8 @@
+[package]
+name = "recordlog"
+version = "0.1.0"
+authors = ["Paul Masurel <paul.masurel@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+crc32fast = "1.2"
