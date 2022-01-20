@@ -6,3 +6,4 @@ edition = "2018"
 
 [dependencies]
 crc32fast = "1.2"
+thiserror = "1"

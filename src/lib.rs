@@ -63,21 +63,35 @@ fn crc32(data: &[u8]) -> u32 {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum RecordType {
+enum FrameType {
     FULL = 1u8,
     FIRST = 2u8,
     MIDDLE = 3u8,
     LAST = 4u8,
 }
 
-impl RecordType {
-    fn from_u8(b: u8) -> Result<RecordType, ()> {
+impl FrameType {
+    fn from_u8(b: u8) -> Result<FrameType, ()> {
         match b {
-            1u8 => Ok(RecordType::FULL),
-            2u8 => Ok(RecordType::FIRST),
-            3u8 => Ok(RecordType::MIDDLE),
-            4u8 => Ok(RecordType::LAST),
+            1u8 => Ok(FrameType::FULL),
+            2u8 => Ok(FrameType::FIRST),
+            3u8 => Ok(FrameType::MIDDLE),
+            4u8 => Ok(FrameType::LAST),
             _ => Err(()),
+        }
+    }
+
+    fn is_first_frame_of_record(&self) -> bool {
+        match self {
+            FrameType::FULL | FrameType::FIRST => true,
+            FrameType::LAST | FrameType::MIDDLE => false,
+        }
+    }
+
+    fn is_last_frame_of_record(&self) -> bool {
+        match self {
+            FrameType::FULL | FrameType::LAST => true,
+            FrameType::FIRST | FrameType::MIDDLE => false,
         }
     }
 }
@@ -92,16 +106,16 @@ pub enum TypeState {
 struct Header {
     checksum: u32,
     len: u16,
-    record_type: RecordType,
+    frame_type: FrameType,
 }
 
 impl Header {
-    pub fn for_payload(record_type: RecordType, payload: &[u8]) -> Header {
+    pub fn for_payload(frame_type: FrameType, payload: &[u8]) -> Header {
         assert!(payload.len() < BLOCK_LEN);
         Header {
             checksum: crc32(payload),
             len: payload.len() as u16,
-            record_type,
+            frame_type,
         }
     }
 
@@ -117,18 +131,18 @@ impl Header {
         assert_eq!(dest.len(), HEADER_LEN);
         dest[..4].copy_from_slice(&self.checksum.to_le_bytes()[..]);
         dest[4..6].copy_from_slice(&self.len.to_le_bytes()[..]);
-        dest[6] = self.record_type as u8;
+        dest[6] = self.frame_type as u8;
     }
 
     fn deserialize(data: &[u8]) -> Result<Header, ()> {
         assert_eq!(data.len(), HEADER_LEN);
         let checksum = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
         let len = u16::from_le_bytes([data[4], data[5]]);
-        let record_type = RecordType::from_u8(data[6])?;
+        let frame_type = FrameType::from_u8(data[6])?;
         Ok(Header {
             checksum,
             len,
-            record_type,
+            frame_type,
         })
     }
 }

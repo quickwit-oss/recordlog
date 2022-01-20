@@ -1,5 +1,7 @@
-use crate::{Header, RecordType, BLOCK_LEN, HEADER_LEN};
+use crate::{FrameType, Header, BLOCK_LEN, HEADER_LEN};
+use std::fs::{File, OpenOptions};
 use std::io;
+use std::path::Path;
 
 const PADDING_ZEROES: [u8; HEADER_LEN] = [0u8; HEADER_LEN];
 
@@ -10,12 +12,29 @@ pub struct Writer<W: io::Write> {
 }
 
 impl<W: io::Write> Writer<W> {
-    pub fn new(w: W) -> Writer<W> {
+    pub fn new(w: W) -> Self {
         Writer {
             write: w,
             current_block_len: 0,
             buffer: Box::new([0u8; BLOCK_LEN]),
         }
+    }
+}
+
+impl Writer<File> {
+    pub fn open(path: &Path) -> io::Result<Self> {
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .read(true)
+            .open(path)?;
+        // let mut reader = Reader::new(file);
+        unimplemented!();
+        Ok(Writer {
+            write: file,
+            current_block_len: 0,
+            buffer: Box::new([0u8; BLOCK_LEN]),
+        })
     }
 }
 
@@ -58,10 +77,10 @@ impl<W: io::Write> Writer<W> {
             let last_chunk = remaining_payload.is_empty();
 
             let record_type = match (first_chunk, last_chunk) {
-                (true, true) => RecordType::FULL,
-                (true, false) => RecordType::FIRST,
-                (false, false) => RecordType::MIDDLE,
-                (false, true) => RecordType::LAST,
+                (true, true) => FrameType::FULL,
+                (true, false) => FrameType::FIRST,
+                (false, false) => FrameType::MIDDLE,
+                (false, true) => FrameType::LAST,
             };
 
             self.write_record(record_type, chunk_payload)?;
@@ -75,7 +94,7 @@ impl<W: io::Write> Writer<W> {
         self.write.flush()
     }
 
-    fn write_record(&mut self, record_type: RecordType, data: &[u8]) -> io::Result<()> {
+    fn write_record(&mut self, record_type: FrameType, data: &[u8]) -> io::Result<()> {
         Header::for_payload(record_type, data).serialize(&mut self.buffer[..HEADER_LEN]);
         let record_len = HEADER_LEN + data.len();
         self.buffer[HEADER_LEN..record_len].copy_from_slice(data);

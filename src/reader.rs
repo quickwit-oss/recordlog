@@ -1,4 +1,6 @@
-use crate::{Header, RecordType, TypeState, BLOCK_LEN, HEADER_LEN};
+use thiserror::Error;
+
+use crate::{FrameType, Header, BLOCK_LEN, HEADER_LEN};
 use std::io::{self, SeekFrom};
 
 pub struct Reader<R> {
@@ -16,7 +18,7 @@ impl<R: io::Read> Reader<R> {
         }
     }
 
-    pub fn read_record(&mut self) -> Result<Option<&[u8]>, RecordReadError> {
+    pub fn read_record(&mut self) -> Result<Option<&[u8]>, ReadError> {
         self.inner.read_record(&mut self.buffer)
     }
 }
@@ -24,6 +26,10 @@ impl<R: io::Read> Reader<R> {
 impl<R: io::Read + io::Seek> Reader<R> {
     pub fn seek(&mut self, offset: u64) -> io::Result<()> {
         self.inner.seek(offset)
+    }
+
+    pub fn set_after_last_valid_record(&mut self) -> io::Result<()> {
+        self.inner.set_after_last_valid_record()
     }
 }
 
@@ -33,19 +39,6 @@ struct InnerReader<R> {
     block: Box<[u8; BLOCK_LEN]>,
     current_block_len: usize,
     block_dropped: bool,
-}
-
-#[derive(Debug)]
-pub enum RecordReadError {
-    IO(io::Error),
-    Corruption,
-    IncompleteRecord,
-}
-
-impl From<io::Error> for RecordReadError {
-    fn from(io_error: io::Error) -> Self {
-        RecordReadError::IO(io_error)
-    }
 }
 
 impl<R: io::Read + io::Seek> InnerReader<R> {
@@ -60,9 +53,42 @@ impl<R: io::Read + io::Seek> InnerReader<R> {
         let block_offset = offset - in_block_offset as u64;
         self.read.seek(SeekFrom::Start(block_offset))?;
         self.in_block_offset = in_block_offset;
-        self.load_block()?;
+        self.fill_block_buffer()?;
         Ok(())
     }
+
+    // Positions the reader right after the last complete record.
+    pub fn set_after_last_valid_record(&mut self) -> io::Result<()> {
+        let len = self.read.seek(SeekFrom::End(0))?;
+        let num_blocks = len / (BLOCK_LEN as u64);
+        for last_block_offset in (0..num_blocks).rev() {
+            if self.set_after_last_valid_record_in_block(last_block_offset)? {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
+    // Attempt to set the reader right after the last complete record in the block.
+    // In other words, it positions the reader right after the last frame of type FULL or LAST.
+    //
+    // If the block does not contain any such block, return `Ok(false)`.
+    pub fn set_after_last_valid_record_in_block(&mut self, block_id: u64) -> io::Result<bool> {
+        let block_offset = block_id * (BLOCK_LEN as u64);
+        self.read.seek(SeekFrom::Start(block_offset))?;
+        // let mut last_valid_record_offset = None;
+        // let mut record_buffer = Vec::new();
+        // self.read_record(&mut record_buffer)?;
+        unimplemented!()
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum ReadError {
+    #[error("Encounterred an io Error: {0}")]
+    Io(#[from] io::Error),
+    #[error("Found a corrupted record")]
+    Corruption,
 }
 
 impl<R: io::Read> InnerReader<R> {
@@ -80,73 +106,87 @@ impl<R: io::Read> InnerReader<R> {
         self.block_dropped = true;
     }
 
-    pub fn read_record<'b, 'a: 'b>(
-        &'a mut self,
-        buffer: &'b mut Vec<u8>,
-    ) -> Result<Option<&'b [u8]>, RecordReadError> {
-        buffer.clear();
-        while self.block_dropped {
-            if !self.load_block()? {
+    /// Attempt to read the next frame.
+    ///
+    /// Return `Ok(None)` if no frame is available.
+    pub fn read_frame(
+        &mut self,
+        record_buffer: &mut Vec<u8>,
+    ) -> Result<Option<FrameType>, ReadError> {
+        if self.available_num_bytes() < HEADER_LEN {
+            self.fill_block_buffer()?;
+            if self.available_num_bytes() < HEADER_LEN {
                 return Ok(None);
             }
         }
-        let mut state = TypeState::Initial;
-        loop {
-            if self.data().len() < HEADER_LEN {
-                // handle eof.
-                if !self.load_block()? {
-                    return Ok(None);
-                }
-                continue;
-            }
-            let data = self.data();
-            let header = Header::deserialize(&self.data()[..HEADER_LEN])
-                .map_err(|_| RecordReadError::Corruption)?;
-            let chunk = &data[HEADER_LEN..][..header.len()];
-            if !header.check(chunk) {
-                // Our record checksum is wrong. We'd better skip the entire block.
-                // As far as we know the `len` could have been wrong too.
-                self.drop_block();
-                return Err(RecordReadError::Corruption);
-            }
 
-            let record_start = self.in_block_offset + HEADER_LEN;
-            let record_stop = record_start + header.len as usize;
+        let header = Header::deserialize(&self.block[self.in_block_offset..][..HEADER_LEN])
+            .map_err(|_| ReadError::Corruption)?;
 
-            match (state, header.record_type) {
-                (TypeState::Initial, RecordType::FIRST)
-                | (TypeState::Middle, RecordType::MIDDLE) => {
-                    state = TypeState::Middle;
-                    self.in_block_offset = record_stop;
-                    buffer.extend_from_slice(&self.block[record_start..record_stop]);
-                }
-                (TypeState::Initial, RecordType::FULL) => {
-                    // Avoiding the extra copy, return from the block buffer directly.
-                    self.in_block_offset = record_stop;
-                    return Ok(Some(&self.block[record_start..record_stop]));
-                }
-                (TypeState::Middle, RecordType::LAST) => {
-                    // This is the last chunk of our record.
-                    // We can emit our result.
-                    self.in_block_offset = record_stop;
-                    buffer.extend_from_slice(&self.block[record_start..record_stop]);
-                    return Ok(Some(&buffer[..]));
-                }
-                (TypeState::Initial, _) | (_, RecordType::FULL) | (_, RecordType::FIRST) => {
-                    return Err(RecordReadError::IncompleteRecord);
-                }
-            };
+        let frame_start = self.in_block_offset + HEADER_LEN;
+        let frame_end = frame_start + header.len();
+
+        if frame_end > BLOCK_LEN {
+            // This is a corruption!
+            // Mark this block as dropped and return a corruption.
+            self.drop_block();
+            return Err(ReadError::Corruption);
         }
+
+        if self.current_block_len < frame_end {
+            self.fill_block_buffer()?;
+            if self.current_block_len < frame_end {
+                return Ok(None);
+            }
+        }
+
+        let frame_payload = &self.block[frame_start..frame_end];
+        self.in_block_offset = frame_end;
+
+        if !header.check(frame_payload) {
+            // Our record checksum is wrong. We'd better skip the entire block.
+            // As far as we know the `len` could have been wrong too.
+            return Err(ReadError::Corruption);
+        }
+
+        if header.frame_type.is_first_frame_of_record() {
+            record_buffer.clear();
+        }
+        record_buffer.extend_from_slice(&frame_payload);
+        Ok(Some(header.frame_type))
     }
 
-    /// Loads a new block.
+    pub fn read_record<'b, 'a: 'b>(
+        &'a mut self,
+        record_buffer: &'b mut Vec<u8>,
+    ) -> Result<Option<&'b [u8]>, ReadError> {
+        if self.block_dropped {
+            self.fill_block_buffer()?;
+            if self.current_block_len != BLOCK_LEN {
+                // We weren't able to read the entire block just yet.
+                return Ok(None);
+            }
+            self.block_dropped = false;
+            self.in_block_offset = BLOCK_LEN;
+        }
+
+        while let Some(frame_type) = self.read_frame(record_buffer)? {
+            // TODO defensively check the frame type state machine?
+            // That's not really necessary though.
+            if frame_type.is_last_frame_of_record() {
+                return Ok(Some(&record_buffer[..]));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Attempt to read more data.
+    /// This function will fill the current block buffer.
     ///
-    /// Returns true iff new data was available.
-    /// The block is not necessarily complete.
-    ///
-    /// If a writer is appending data to this stream, it is possible, and allowed
-    /// for`.load_block()` to return `Ok(false)`, and then later `Ok(true)`.
-    fn load_block(&mut self) -> io::Result<bool> {
+    /// This method returning Ok(()), even if no data
+    /// could be read.
+    fn fill_block_buffer(&mut self) -> io::Result<()> {
         let mut block_len;
         if self.current_block_len == BLOCK_LEN {
             // The current block has been entirely loaded.
@@ -163,23 +203,17 @@ impl<R: io::Read> InnerReader<R> {
         while block_len != BLOCK_LEN {
             let read_len = self.read.read(&mut self.block[block_len..])?;
             if read_len == 0 {
-                if block_len == self.current_block_len {
-                    // No data was read at all. We reach the end of our stream.
-                    return Ok(false);
-                } else {
-                    self.current_block_len = block_len;
-                    // returning a partial block.
-                    return Ok(true);
-                }
+                self.current_block_len = block_len;
+                return Ok(());
             }
             block_len += read_len;
         }
         self.current_block_len = BLOCK_LEN;
         // Loaded a full block.
-        Ok(true)
+        Ok(())
     }
 
-    fn data(&self) -> &[u8] {
-        &self.block[self.in_block_offset..self.current_block_len]
+    fn available_num_bytes(&self) -> usize {
+        self.current_block_len - self.in_block_offset
     }
 }

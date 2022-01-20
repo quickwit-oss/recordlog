@@ -1,4 +1,4 @@
-use crate::reader::RecordReadError;
+use crate::reader::ReadError;
 use crate::{Reader, Writer, HEADER_LEN};
 
 #[test]
@@ -92,7 +92,7 @@ fn test_behavior_upon_corruption() {
             // bug at i=73
             assert_eq!(reader.read_record().unwrap(), Some(record.as_bytes()));
         }
-        if let RecordReadError::Corruption = reader.read_record().unwrap_err() {
+        if let ReadError::Corruption = reader.read_record().unwrap_err() {
         } else {
             panic!("Excepted a `Corruption` error");
         }
