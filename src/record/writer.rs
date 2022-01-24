@@ -1,7 +1,9 @@
-use crate::frame::{FrameType, FrameWriter};
+use std::io::SeekFrom;
+
+use crate::frame::{FrameType, FrameWriter, BLOCK_LEN};
 use async_trait::async_trait;
 use tokio::fs::File;
-use tokio::io::{self, AsyncWrite};
+use tokio::io::{self, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 
 pub struct RecordWriter<W> {
     frame_writer: FrameWriter<W>,
@@ -29,7 +31,7 @@ impl<'a> RecordWriter<&'a mut Vec<u8>> {
     }
 }
 
-impl<W: Syncable + io::AsyncWrite + io::AsyncSeek + Unpin> RecordWriter<W> {
+impl<W: FileTrait + io::AsyncWrite + Unpin> RecordWriter<W> {
     /// `sync_mode` controls whether the writer syncs to disk
     /// after each record or not.
     ///
@@ -41,8 +43,9 @@ impl<W: Syncable + io::AsyncWrite + io::AsyncSeek + Unpin> RecordWriter<W> {
     /// `sync_mode` enforces an extra call to `fsync`.
     ///
     /// It offers better durability guarantees, at the cost of performance.
-    pub async fn append_to(wrt: W, sync_mode: bool) -> io::Result<Self> {
-        let frame_writer = FrameWriter::append_to(wrt).await?;
+    pub async fn append_to(mut wrt: W, sync_mode: bool) -> io::Result<Self> {
+        wrt.pad_for_block_alignment().await?;
+        let frame_writer = FrameWriter::create_with_aligned_write(wrt);
         Ok(RecordWriter {
             frame_writer,
             sync_mode,
@@ -50,7 +53,7 @@ impl<W: Syncable + io::AsyncWrite + io::AsyncSeek + Unpin> RecordWriter<W> {
     }
 }
 
-impl<W: Syncable + AsyncWrite + Unpin> RecordWriter<W> {
+impl<W: FileTrait + AsyncWrite + Unpin> RecordWriter<W> {
     async fn write_single_record(&mut self, mut payload: &[u8]) -> io::Result<()> {
         let mut is_first_frame = true;
         loop {
@@ -119,12 +122,27 @@ impl RecordWriter<File> {
 }
 
 #[async_trait]
-pub trait Syncable {
+pub trait FileTrait {
+    async fn pad_for_block_alignment(&mut self) -> io::Result<()>;
     async fn sync(&mut self) -> io::Result<()>;
 }
 
 #[async_trait]
-impl Syncable for File {
+impl FileTrait for File {
+    async fn pad_for_block_alignment(&mut self) -> io::Result<()> {
+        let position_from_start: u64 = self.seek(SeekFrom::Current(0)).await?;
+        let position_within_block = (position_from_start % BLOCK_LEN as u64) as usize;
+        if position_within_block != 0 {
+            // We are within a block.
+            // Let's pad this block. The writer will detect that as
+            // corrupted frame, which is fine.
+            let pad_num_bytes = BLOCK_LEN - position_within_block;
+            let padding_bytes = vec![0u8; pad_num_bytes];
+            self.write_all(&padding_bytes).await?;
+        }
+        Ok(())
+    }
+
     async fn sync(&mut self) -> io::Result<()> {
         self.sync_all().await?;
         Ok(())
@@ -132,15 +150,29 @@ impl Syncable for File {
 }
 
 #[async_trait]
-impl Syncable for Vec<u8> {
+impl FileTrait for Vec<u8> {
     async fn sync(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
+    async fn pad_for_block_alignment(&mut self) -> io::Result<()> {
+        let num_blocks_padded = (self.len() + BLOCK_LEN - 1) / BLOCK_LEN;
+        let padded_len = BLOCK_LEN * num_blocks_padded;
+        self.resize(padded_len, 0u8);
         Ok(())
     }
 }
 
 #[async_trait]
-impl<'a> Syncable for &'a mut Vec<u8> {
+impl<'a> FileTrait for &'a mut Vec<u8> {
     async fn sync(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
+    async fn pad_for_block_alignment(&mut self) -> io::Result<()> {
+        let num_blocks_padded = (self.len() + BLOCK_LEN - 1) / BLOCK_LEN;
+        let padded_len = BLOCK_LEN * num_blocks_padded;
+        self.resize(padded_len, 0u8);
         Ok(())
     }
 }

@@ -53,9 +53,12 @@ impl<R: AsyncRead + Unpin> RecordReader<R> {
                     return Err(ReadRecordError::Corruption);
                 }
                 Err(ReadFrameError::IoError(io_err)) => {
-                    return Err(ReadRecordError::IoError(io_err))
+                    self.within_record = false;
+                    return Err(ReadRecordError::IoError(io_err));
                 }
-                Err(ReadFrameError::NotAvailable) => return Ok(None),
+                Err(ReadFrameError::NotAvailable) => {
+                    return Ok(None);
+                }
             }
         }
     }
