@@ -46,4 +46,7 @@
 mod frame;
 mod record;
 
+#[cfg(test)]
+mod tests;
+
 pub use record::{ReadRecordError, RecordReader, RecordWriter};

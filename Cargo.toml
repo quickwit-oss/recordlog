@@ -12,3 +12,6 @@ async-trait = "0.1"
 
 [dev-dependencies]
 tokio = {version="1", features=["io-util", "macros", "rt-multi-thread", "fs"]}
+tempfile = "3"
+futures = "0.3"
+rand = "0.8"
