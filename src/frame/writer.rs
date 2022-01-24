@@ -1,5 +1,5 @@
-use std::io::{self, SeekFrom};
-use tokio::io::{AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufWriter};
+use std::io;
+use tokio::io::{AsyncWrite, AsyncWriteExt, BufWriter};
 
 use crate::frame::{FrameType, Header, BLOCK_LEN, HEADER_LEN};
 
@@ -7,22 +7,6 @@ pub(crate) struct FrameWriter<W> {
     wrt: BufWriter<W>,
     buffer: Box<[u8; BLOCK_LEN]>,
     current_block_len: usize,
-}
-
-impl<W: AsyncWrite + AsyncSeek + Unpin> FrameWriter<W> {
-    pub async fn append_to(mut wrt: W) -> io::Result<Self> {
-        let position_from_start: u64 = wrt.seek(SeekFrom::Current(0)).await?;
-        let position_within_block = (position_from_start % BLOCK_LEN as u64) as usize;
-        if position_within_block != 0 {
-            // We are within a block.
-            // Let's pad this block. The writer will detect that as
-            // corrupted frame, which is fine.
-            let pad_num_bytes = BLOCK_LEN - position_within_block;
-            let padding_bytes = vec![0u8; pad_num_bytes];
-            wrt.write_all(&padding_bytes).await?;
-        }
-        Ok(Self::create_with_aligned_write(wrt))
-    }
 }
 
 impl<W: AsyncWrite + Unpin> FrameWriter<W> {

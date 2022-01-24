@@ -63,8 +63,11 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
         assert!(self.available_len() < BLOCK_LEN);
         let num_bytes_available = self.available_len();
         let (free_area, unread_data) = self.buffer.split_at_mut(self.available.start);
-        let new_available = 0..num_bytes_available;
-        free_area[new_available.clone()].copy_from_slice(&unread_data[new_available.clone()]);
+        // We don't just stet new_available_start to 0, because we want to keep block_alignment
+        // within our buffer.
+        let new_available_start = self.available.start % BLOCK_LEN;
+        let new_available = new_available_start..new_available_start + num_bytes_available;
+        free_area[new_available.clone()].copy_from_slice(&unread_data[..num_bytes_available]);
         self.available = new_available;
     }
 
@@ -73,10 +76,7 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
     /// Attempts to fill the internal `buffer`,
     /// which is why it does not take a number of bytes to
     /// attempt to read.
-    ///
-    /// If no bytes are not available, it still
-    /// returns `Ok(())`.
-    async fn read_slab(&mut self) -> io::Result<()> {
+    async fn read_slab(&mut self) -> io::Result<usize> {
         assert!(self.available_len() < BLOCK_LEN);
         if self.free_len() < BLOCK_LEN {
             // We are reaching the saturation of our buffer.
@@ -84,12 +84,13 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
             self.rotate_buffer();
         }
         assert!(self.free_len() >= BLOCK_LEN);
+        assert!(self.buffer[self.available.end..].len() >= BLOCK_LEN);
         let num_read_bytes: usize = self
             .reader
             .read(&mut self.buffer[self.available.end..])
             .await?;
         self.available.end += num_read_bytes;
-        Ok(())
+        Ok(num_read_bytes)
     }
 
     // Returns the number of bytes remaining into
@@ -108,18 +109,19 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
         }
         self.ensure_bytes_available(num_bytes_to_end_of_block)
             .await?;
-        self.block_corrupted = false;
         self.advance(num_bytes_to_end_of_block);
+        self.block_corrupted = false;
         Ok(())
     }
 
-    async fn ensure_bytes_available(&mut self, available_len: usize) -> Result<(), ReadFrameError> {
-        if self.available_len() >= available_len {
+    async fn ensure_bytes_available(&mut self, required_len: usize) -> Result<(), ReadFrameError> {
+        if self.available_len() >= required_len {
             return Ok(());
         }
-        self.read_slab().await?;
-        if self.available_len() >= available_len {
-            return Ok(());
+        while self.read_slab().await? > 0 {
+            if self.available_len() >= required_len {
+                return Ok(());
+            }
         }
         Err(ReadFrameError::NotAvailable)
     }
@@ -132,9 +134,14 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
     // This method does not consume any bytes (which is why it is called get and not read).
     async fn get_frame_header(&mut self) -> Result<Header, ReadFrameError> {
         self.ensure_bytes_available(HEADER_LEN).await?;
-        let header = Header::deserialize(&self.buffer[self.available.clone()][..HEADER_LEN])
-            .ok_or(ReadFrameError::Corruption)?;
-        Ok(header)
+        let header_bytes = &self.buffer[self.available.clone()][..HEADER_LEN];
+        match Header::deserialize(&header_bytes) {
+            Some(header) => Ok(header),
+            None => {
+                self.block_corrupted = true;
+                Err(ReadFrameError::Corruption)
+            }
+        }
     }
 
     // Reads the next frame.
