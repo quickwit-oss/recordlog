@@ -45,6 +45,7 @@
 
 mod frame;
 mod record;
+mod rolling;
 
 #[cfg(test)]
 mod tests;

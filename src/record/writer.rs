@@ -22,7 +22,9 @@ fn frame_type(is_first_frame: bool, is_last_frame: bool) -> FrameType {
 }
 
 impl<'a> RecordWriter<&'a mut Vec<u8>> {
+    #[cfg(test)]
     pub fn open(buffer: &'a mut Vec<u8>) -> Self {
+        assert_eq!(buffer.len() % BLOCK_LEN, 0);
         let frame_writer = FrameWriter::create_with_aligned_write(buffer);
         RecordWriter {
             frame_writer,
