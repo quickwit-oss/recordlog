@@ -30,6 +30,7 @@
 //! log_writer.write_record(b"happy").await?;
 //! log_writer.write_record(b"tax").await?;
 //! log_writer.write_record(b"payer").await?;
+//! log_writer.flush().await?;
 //! }
 //!
 //! // ... and the reader can work with any `io::Read`.

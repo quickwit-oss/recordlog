@@ -32,13 +32,13 @@ pub struct RollingRecordWriter {
 
 impl RollingRecordWriter {
     // pub(crate) fn open(dir_path: &Path) -> RollinRecordWriter {
-        // let file = OpenOptions::new()
-        //     .create(true)
-        //     .append(true)
-        //     .open();
-        // RollingRecordWriter {
-        //     path: path.to_path_buf(),
-        //     record_writer: RecordWriter::append_to(buffer),
-        // }
+    // let file = OpenOptions::new()
+    //     .create(true)
+    //     .append(true)
+    //     .open();
+    // RollingRecordWriter {
+    //     path: path.to_path_buf(),
+    //     record_writer: RecordWriter::append_to(buffer),
+    // }
     // }
 }

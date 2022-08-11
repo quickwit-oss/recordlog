@@ -17,6 +17,6 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
+mod directory;
 mod reader;
 mod writer;
-mod directory;

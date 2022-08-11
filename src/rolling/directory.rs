@@ -18,7 +18,6 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 use std::collections::BTreeSet;
-use std::fs::FileType;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
@@ -26,10 +25,38 @@ use std::path::PathBuf;
 use tokio::fs::File;
 use tokio::fs::OpenOptions;
 
-pub struct Directory {
+struct Inner {
     dir: PathBuf,
     seq_numbers: BTreeSet<u64>, //< counter for the next file to be created.
-        // No file with this number should exist.
+                                // No file with this number should exist.
+}
+
+pub struct ReadableDirectory {
+    inner: Inner,
+}
+
+impl ReadableDirectory {
+    pub fn files<'a>(&'a self) -> impl Iterator<Item = PathBuf> + 'a {
+        self.inner.files()
+    }
+}
+
+pub struct WritableDirectory {
+    inner: Inner,
+}
+
+impl WritableDirectory {
+    async fn new_file(&mut self) -> io::Result<File> {
+        self.inner.new_file().await
+    }
+}
+
+impl From<ReadableDirectory> for WritableDirectory {
+    fn from(readable_dir: ReadableDirectory) -> Self {
+        WritableDirectory {
+            inner: readable_dir.inner,
+        }
+    }
 }
 
 fn filename_to_seq_number(file_name: &str) -> Option<u64> {
@@ -43,7 +70,8 @@ fn filename_to_seq_number(file_name: &str) -> Option<u64> {
     if !seq_number_str
         .as_bytes()
         .iter()
-        .all(|b| (b'0'..=b'9').contains(b)) {
+        .all(|b| (b'0'..=b'9').contains(b))
+    {
         return None;
     }
     file_name[4..].parse::<u64>().ok()
@@ -51,11 +79,10 @@ fn filename_to_seq_number(file_name: &str) -> Option<u64> {
 
 fn seq_number_to_filename(seq_number: u64) -> String {
     format!("wal-{seq_number:020}")
-
 }
 
-impl Directory {
-    pub fn open(dir: &Path) -> io::Result<Directory> {
+impl Inner {
+    fn open(dir: &Path) -> io::Result<Inner> {
         let read_dir = dir.read_dir()?;
         let mut seq_numbers: BTreeSet<u64> = Default::default();
         for dir_entry_res in read_dir {
@@ -72,21 +99,33 @@ impl Directory {
                 seq_numbers.insert(seq_number);
             }
         }
-        Ok(Directory {
+        Ok(Inner {
             dir: dir.to_path_buf(),
             seq_numbers,
         })
     }
 
-    pub async fn new_file(&mut self,) -> io::Result<File> {
-        let next_seq_number = self.seq_numbers.iter()
+    fn files<'a>(&'a self) -> impl Iterator<Item = PathBuf> + 'a {
+        self.seq_numbers
+            .iter()
+            .copied()
+            .map(move |seq_number| self.filepath(seq_number))
+    }
+
+    fn filepath(&self, seq_number: u64) -> PathBuf {
+        self.dir.join(&format!("wal-{seq_number:020}"))
+    }
+
+    async fn new_file(&mut self) -> io::Result<File> {
+        let next_seq_number = self
+            .seq_numbers
+            .iter()
             .last()
             .copied()
             .map(|seq_number| seq_number + 1u64)
             .unwrap_or(0u64);
         self.seq_numbers.insert(next_seq_number);
-        let new_filepath = self.dir
-            .join(&format!("wal-{next_seq_number:020}"));
+        let new_filepath = self.filepath(next_seq_number);
         OpenOptions::new()
             .create_new(true)
             .write(true)
@@ -95,8 +134,15 @@ impl Directory {
     }
 }
 
+pub fn open_directory(path: &Path) -> io::Result<ReadableDirectory> {
+    let inner = Inner::open(path)?;
+    Ok(ReadableDirectory { inner })
+}
+
 #[cfg(test)]
 mod tests {
+    use tokio::io::AsyncWriteExt;
+
     use super::*;
 
     #[test]
@@ -121,11 +167,54 @@ mod tests {
 
     #[test]
     fn test_filename_to_seq_number_simple() {
-        assert_eq!(filename_to_seq_number("wal-00000000000000000001"), Some(1u64));
+        assert_eq!(
+            filename_to_seq_number("wal-00000000000000000001"),
+            Some(1u64)
+        );
     }
 
     #[test]
     fn test_filename_to_seq_number() {
-        assert_eq!(filename_to_seq_number("wal-00000000000000000001"), Some(1u64));
+        assert_eq!(
+            filename_to_seq_number("wal-00000000000000000001"),
+            Some(1u64)
+        );
+    }
+
+    fn test_directory_file_aux(directory: &Inner, dir_path: &Path) -> Vec<String> {
+        directory
+            .files()
+            .map(|filepath| {
+                assert_eq!(filepath.parent().unwrap(), dir_path);
+                filepath.file_name().unwrap().to_str().unwrap().to_string()
+            })
+            .collect::<Vec<String>>()
+    }
+
+    #[tokio::test]
+    async fn test_directory() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        {
+            let mut directory = Inner::open(tmp_dir.path()).unwrap();
+            let mut file = directory.new_file().await.unwrap();
+            file.write_all(b"hello").await.unwrap();
+            file.flush().await.unwrap();
+        }
+        {
+            let mut directory = Inner::open(tmp_dir.path()).unwrap();
+            let filepaths = test_directory_file_aux(&directory, tmp_dir.path());
+            assert_eq!(&filepaths, &["wal-00000000000000000000"]);
+            let mut file = directory.new_file().await.unwrap();
+            file.write_all(b"hello2").await.unwrap();
+            file.flush().await.unwrap()
+        }
+        {
+            let directory = Inner::open(tmp_dir.path()).unwrap();
+            let filepaths = test_directory_file_aux(&directory, tmp_dir.path());
+            assert_eq!(
+                &filepaths,
+                &["wal-00000000000000000000", "wal-00000000000000000001"]
+            );
+        }
     }
 }
