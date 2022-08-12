@@ -1,5 +1,5 @@
+use super::{ReadRecordError, RecordReader, RecordWriter};
 use crate::frame::{BLOCK_LEN, HEADER_LEN};
-use crate::{ReadRecordError, RecordReader, RecordWriter};
 
 #[tokio::test]
 async fn test_no_data() {

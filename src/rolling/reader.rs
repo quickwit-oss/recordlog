@@ -16,4 +16,75 @@
 //
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
-//
+
+use std::collections::VecDeque;
+use std::io;
+use std::path::Path;
+use std::path::PathBuf;
+
+use tokio::fs::File;
+
+use crate::record::ReadRecordError;
+use crate::record::RecordReader;
+use crate::rolling::directory::ReadableDirectory;
+use crate::RecordLogWriter;
+
+pub struct RecordLogReader {
+    directory: ReadableDirectory,
+    files: VecDeque<PathBuf>,
+    reader_opt: Option<RecordReader<File>>,
+}
+
+impl RecordLogReader {
+    pub async fn open(dir_path: &Path) -> io::Result<Self> {
+        let directory = ReadableDirectory::open(dir_path).await?;
+        let files = directory.file_paths().collect();
+        Ok(RecordLogReader {
+            files,
+            directory,
+            reader_opt: None,
+        })
+    }
+
+    pub fn into_writer(self) -> RecordLogWriter {
+        RecordLogWriter::open(self.directory.into())
+    }
+
+    async fn go_next_record_current_reader(&mut self) -> Result<bool, ReadRecordError> {
+        if let Some(record_reader) = self.reader_opt.as_mut() {
+            record_reader.go_next().await
+        } else {
+            Ok(false)
+        }
+    }
+
+    async fn go_next_record(&mut self) -> Result<bool, ReadRecordError> {
+        loop {
+            if self.go_next_record_current_reader().await? {
+                return Ok(true);
+            }
+            if !self.load_next_file().await? {
+                return Ok(false);
+            }
+        }
+    }
+
+    async fn load_next_file(&mut self) -> io::Result<bool> {
+        if let Some(next_file_path) = self.files.pop_front() {
+            let next_file = File::open(next_file_path).await?;
+            let record_reader = RecordReader::open(next_file);
+            self.reader_opt = Some(record_reader);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    pub async fn read_record(&mut self) -> Result<Option<&[u8]>, ReadRecordError> {
+        if self.go_next_record().await? {
+            Ok(Some(self.reader_opt.as_ref().unwrap().record()))
+        } else {
+            Ok(None)
+        }
+    }
+}

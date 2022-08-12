@@ -58,22 +58,18 @@ impl<W: AsyncWrite + Unpin> RecordWriter<W> {
         Ok(())
     }
 
-    /// See `write_record`.
-    /// If an io::Error is returned, any number of record may have been written.
-    pub async fn write_record_batch(
-        &mut self,
-        payloads: impl Iterator<Item = &[u8]>,
-    ) -> io::Result<()> {
-        for record_payload in payloads {
-            self.write_record(record_payload).await?;
-        }
-        Ok(())
-    }
-
     /// Flushes and sync the data to disk.
     pub async fn flush(&mut self) -> io::Result<()> {
         // Empty the application buffer.
         self.frame_writer.flush().await?;
         Ok(())
+    }
+
+    pub fn get_underlying_wrt(&mut self) -> &mut W {
+        self.frame_writer.get_underlying_wrt()
+    }
+
+    pub fn num_bytes_written(&self) -> u64 {
+        self.frame_writer.num_bytes_written()
     }
 }

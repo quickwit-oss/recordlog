@@ -20,3 +20,10 @@
 mod directory;
 mod reader;
 mod writer;
+
+use self::directory::{ReadableDirectory, WritableDirectory};
+pub use self::reader::RecordLogReader;
+pub use self::writer::RecordLogWriter;
+
+#[cfg(test)]
+mod tests;

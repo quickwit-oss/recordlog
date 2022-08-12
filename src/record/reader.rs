@@ -30,7 +30,22 @@ impl<R: AsyncRead + Unpin> RecordReader<R> {
         }
     }
 
+    pub fn record(&self) -> &[u8] {
+        &self.record_buffer
+    }
+
     pub async fn read_record(&mut self) -> Result<Option<&[u8]>, ReadRecordError> {
+        let has_record = self.go_next().await?;
+        if has_record {
+            Ok(Some(self.record()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    // Attempts to position the reader to the next record and return
+    // true or false whether such a record is available or not.
+    pub async fn go_next(&mut self) -> Result<bool, ReadRecordError> {
         loop {
             match self.frame_reader.read_frame().await {
                 Ok((fragment_type, frame_payload)) => {
@@ -44,7 +59,7 @@ impl<R: AsyncRead + Unpin> RecordReader<R> {
                     if fragment_type.is_last_frame_of_record() {
                         if self.within_record {
                             self.within_record = false;
-                            return Ok(Some(&self.record_buffer));
+                            return Ok(true);
                         }
                     }
                 }
@@ -57,7 +72,7 @@ impl<R: AsyncRead + Unpin> RecordReader<R> {
                     return Err(ReadRecordError::IoError(io_err));
                 }
                 Err(ReadFrameError::NotAvailable) => {
-                    return Ok(None);
+                    return Ok(false);
                 }
             }
         }

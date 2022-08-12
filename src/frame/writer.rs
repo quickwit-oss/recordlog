@@ -7,6 +7,7 @@ pub(crate) struct FrameWriter<W> {
     wrt: BufWriter<W>,
     buffer: Box<[u8; BLOCK_LEN]>,
     current_block_len: usize,
+    num_bytes_written: u64,
 }
 
 impl<W: AsyncWrite + Unpin> FrameWriter<W> {
@@ -15,7 +16,12 @@ impl<W: AsyncWrite + Unpin> FrameWriter<W> {
             wrt: BufWriter::new(wrt),
             buffer: Box::new([0u8; BLOCK_LEN]),
             current_block_len: 0,
+            num_bytes_written: 0u64,
         }
+    }
+
+    pub fn num_bytes_written(&self) -> u64 {
+        self.num_bytes_written
     }
 
     pub async fn write_frame<B: AsRef<[u8]>>(
@@ -34,6 +40,7 @@ impl<W: AsyncWrite + Unpin> FrameWriter<W> {
         self.buffer[HEADER_LEN..record_len].copy_from_slice(payload);
         self.current_block_len = (self.current_block_len + record_len) % BLOCK_LEN;
         self.wrt.write_all(&self.buffer[..record_len]).await?;
+        self.num_bytes_written += record_len as u64;
         Ok(())
     }
 
@@ -50,6 +57,7 @@ impl<W: AsyncWrite + Unpin> FrameWriter<W> {
         let remaining_num_bytes_in_block = self.available_num_bytes_in_block();
         let b = vec![0u8; remaining_num_bytes_in_block];
         self.wrt.write_all(&b).await?;
+        self.num_bytes_written += b.len() as u64;
         Ok(())
     }
 
