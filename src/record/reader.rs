@@ -1,4 +1,7 @@
-use crate::frame::{FrameReader, ReadFrameError};
+use crate::{
+    frame::{FrameReader, ReadFrameError},
+    Serializable,
+};
 use std::io;
 use thiserror::Error;
 use tokio::io::AsyncRead;
@@ -30,14 +33,18 @@ impl<R: AsyncRead + Unpin> RecordReader<R> {
         }
     }
 
-    pub fn record(&self) -> &[u8] {
-        &self.record_buffer
+    pub fn record<'a, S: Serializable<'a>>(&'a self) -> Option<S> {
+        S::deserialize(&self.record_buffer)
     }
 
-    pub async fn read_record(&mut self) -> Result<Option<&[u8]>, ReadRecordError> {
+    #[cfg(test)]
+    pub async fn read_record<'a, S: Serializable<'a>>(
+        &'a mut self,
+    ) -> Result<Option<S>, ReadRecordError> {
         let has_record = self.go_next().await?;
         if has_record {
-            Ok(Some(self.record()))
+            let record = self.record().ok_or(ReadRecordError::Corruption)?;
+            Ok(Some(record))
         } else {
             Ok(None)
         }
@@ -47,16 +54,17 @@ impl<R: AsyncRead + Unpin> RecordReader<R> {
     // true or false whether such a record is available or not.
     pub async fn go_next(&mut self) -> Result<bool, ReadRecordError> {
         loop {
-            match self.frame_reader.read_frame().await {
-                Ok((fragment_type, frame_payload)) => {
-                    if fragment_type.is_first_frame_of_record() {
+            let frame = self.frame_reader.read_frame().await;
+            match frame {
+                Ok((frame_type, frame_payload)) => {
+                    if frame_type.is_first_frame_of_record() {
                         self.within_record = true;
                         self.record_buffer.clear();
                     }
                     if self.within_record {
                         self.record_buffer.extend_from_slice(frame_payload);
                     }
-                    if fragment_type.is_last_frame_of_record() {
+                    if frame_type.is_last_frame_of_record() {
                         if self.within_record {
                             self.within_record = false;
                             return Ok(true);

@@ -1,12 +1,12 @@
-use std::io::SeekFrom;
-
-use crate::frame::{FrameType, FrameWriter, BLOCK_LEN};
-use async_trait::async_trait;
-use tokio::fs::File;
-use tokio::io::{self, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
+use crate::{
+    frame::{FrameType, FrameWriter},
+    Serializable,
+};
+use tokio::io::{self, AsyncWrite};
 
 pub struct RecordWriter<W> {
     frame_writer: FrameWriter<W>,
+    buffer: Vec<u8>,
 }
 
 impl<W: io::AsyncWrite> RecordWriter<W> {}
@@ -23,7 +23,10 @@ fn frame_type(is_first_frame: bool, is_last_frame: bool) -> FrameType {
 impl<W: io::AsyncWrite + Unpin> RecordWriter<W> {
     pub fn open(wrt: W) -> Self {
         let frame_writer = FrameWriter::create_with_aligned_write(wrt);
-        RecordWriter { frame_writer }
+        RecordWriter {
+            frame_writer,
+            buffer: Vec::with_capacity(10_000),
+        }
     }
 }
 
@@ -36,8 +39,11 @@ impl<W: AsyncWrite + Unpin> RecordWriter<W> {
     /// For instance, the data could be stale in a library level buffer,
     /// by a writer level buffer, or an application buffer,
     /// or could not be flushed to disk yet by the OS.
-    pub async fn write_record(&mut self, mut payload: &[u8]) -> io::Result<()> {
+    pub async fn write_record(&mut self, record: impl Serializable<'_>) -> io::Result<()> {
         let mut is_first_frame = true;
+        self.buffer.clear();
+        record.serialize(&mut self.buffer);
+        let mut payload = &self.buffer[..];
         loop {
             let frame_payload_len = self
                 .frame_writer

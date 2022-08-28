@@ -25,46 +25,13 @@ use std::path::PathBuf;
 use tokio::fs::File;
 use tokio::fs::OpenOptions;
 
-struct Inner {
+pub struct Directory {
     dir: PathBuf,
-    seq_numbers: BTreeSet<u64>, //< counter for the next file to be created.
-                                // No file with this number should exist.
+    // First position in files.
+    file_set: BTreeSet<u64>,
 }
 
-pub struct ReadableDirectory {
-    inner: Inner,
-}
-
-impl ReadableDirectory {
-    pub async fn open(path: &Path) -> io::Result<Self> {
-        let inner = Inner::open(path).await?;
-        Ok(Self { inner })
-    }
-
-    pub fn file_paths<'a>(&'a self) -> impl Iterator<Item = PathBuf> + 'a {
-        self.inner.file_paths()
-    }
-}
-
-pub struct WritableDirectory {
-    inner: Inner,
-}
-
-impl WritableDirectory {
-    pub async fn new_file(&mut self) -> io::Result<File> {
-        self.inner.new_file().await
-    }
-}
-
-impl From<ReadableDirectory> for WritableDirectory {
-    fn from(readable_dir: ReadableDirectory) -> Self {
-        WritableDirectory {
-            inner: readable_dir.inner,
-        }
-    }
-}
-
-fn filename_to_seq_number(file_name: &str) -> Option<u64> {
+fn filename_to_position(file_name: &str) -> Option<u64> {
     if file_name.len() != 24 {
         return None;
     }
@@ -82,8 +49,8 @@ fn filename_to_seq_number(file_name: &str) -> Option<u64> {
     file_name[4..].parse::<u64>().ok()
 }
 
-impl Inner {
-    async fn open(dir_path: &Path) -> io::Result<Inner> {
+impl Directory {
+    pub async fn open(dir_path: &Path) -> io::Result<Directory> {
         let mut seq_numbers: BTreeSet<u64> = Default::default();
         let mut read_dir = tokio::fs::read_dir(dir_path).await?;
         while let Some(dir_entry) = read_dir.next_entry().await? {
@@ -95,18 +62,37 @@ impl Inner {
             } else {
                 continue;
             };
-            if let Some(seq_number) = filename_to_seq_number(&file_name) {
+            if let Some(seq_number) = filename_to_position(&file_name) {
                 seq_numbers.insert(seq_number);
             }
         }
-        Ok(Inner {
+        Ok(Directory {
             dir: dir_path.to_path_buf(),
-            seq_numbers,
+            file_set: seq_numbers,
         })
     }
 
-    fn file_paths<'a>(&'a self) -> impl Iterator<Item = PathBuf> + 'a {
-        self.seq_numbers
+    pub fn num_files(&self) -> usize {
+        self.file_set.len()
+    }
+
+    pub async fn truncate(&mut self, position: u64) -> io::Result<()> {
+        if let Some(&first_file_to_retain) = self.file_set.range(..=position).last() {
+            let mut removed_files = Vec::new();
+            for &position in self.file_set.range(..first_file_to_retain) {
+                let filepath = self.filepath(position);
+                tokio::fs::remove_file(&filepath).await?;
+                removed_files.push(position);
+            }
+            for position in removed_files {
+                self.file_set.remove(&position);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn file_paths<'a>(&'a self) -> impl Iterator<Item = PathBuf> + 'a {
+        self.file_set
             .iter()
             .copied()
             .map(move |seq_number| self.filepath(seq_number))
@@ -116,16 +102,16 @@ impl Inner {
         self.dir.join(&format!("wal-{seq_number:020}"))
     }
 
-    async fn new_file(&mut self) -> io::Result<File> {
-        let next_seq_number = self
-            .seq_numbers
+    pub async fn new_file(&mut self, position: u64) -> io::Result<File> {
+        assert!(self
+            .file_set
             .iter()
             .last()
             .copied()
-            .map(|seq_number| seq_number + 1u64)
-            .unwrap_or(0u64);
-        self.seq_numbers.insert(next_seq_number);
-        let new_filepath = self.filepath(next_seq_number);
+            .map(|last_position| last_position < position)
+            .unwrap_or(true));
+        self.file_set.insert(position);
+        let new_filepath = self.filepath(position);
         OpenOptions::new()
             .create_new(true)
             .write(true)
@@ -142,36 +128,30 @@ mod tests {
 
     #[test]
     fn test_filename_to_seq_number_invalid_prefix_rejected() {
-        assert_eq!(filename_to_seq_number("fil-00000000000000000001"), None);
+        assert_eq!(filename_to_position("fil-00000000000000000001"), None);
     }
 
     #[test]
     fn test_filename_to_seq_number_invalid_padding_rejected() {
-        assert_eq!(filename_to_seq_number("wal-0000000000000000001"), None);
+        assert_eq!(filename_to_position("wal-0000000000000000001"), None);
     }
 
     #[test]
     fn test_filename_to_seq_number_invalid_len_rejected() {
-        assert_eq!(filename_to_seq_number("wal-000000000000000000011"), None);
+        assert_eq!(filename_to_position("wal-000000000000000000011"), None);
     }
 
     #[test]
     fn test_filename_to_seq_number_simple() {
-        assert_eq!(
-            filename_to_seq_number("wal-00000000000000000001"),
-            Some(1u64)
-        );
+        assert_eq!(filename_to_position("wal-00000000000000000001"), Some(1u64));
     }
 
     #[test]
     fn test_filename_to_seq_number() {
-        assert_eq!(
-            filename_to_seq_number("wal-00000000000000000001"),
-            Some(1u64)
-        );
+        assert_eq!(filename_to_position("wal-00000000000000000001"), Some(1u64));
     }
 
-    fn test_directory_file_aux(directory: &Inner, dir_path: &Path) -> Vec<String> {
+    fn test_directory_file_aux(directory: &Directory, dir_path: &Path) -> Vec<String> {
         directory
             .file_paths()
             .map(|filepath| {
@@ -185,26 +165,61 @@ mod tests {
     async fn test_directory() {
         let tmp_dir = tempfile::tempdir().unwrap();
         {
-            let mut directory = Inner::open(tmp_dir.path()).await.unwrap();
-            let mut file = directory.new_file().await.unwrap();
+            let mut directory = Directory::open(tmp_dir.path()).await.unwrap();
+            let mut file = directory.new_file(0u64).await.unwrap();
             file.write_all(b"hello").await.unwrap();
             file.flush().await.unwrap();
         }
         {
-            let mut directory = Inner::open(tmp_dir.path()).await.unwrap();
+            let mut directory = Directory::open(tmp_dir.path()).await.unwrap();
             let filepaths = test_directory_file_aux(&directory, tmp_dir.path());
             assert_eq!(&filepaths, &["wal-00000000000000000000"]);
-            let mut file = directory.new_file().await.unwrap();
+            let mut file = directory.new_file(3u64).await.unwrap();
             file.write_all(b"hello2").await.unwrap();
             file.flush().await.unwrap()
         }
         {
-            let directory = Inner::open(tmp_dir.path()).await.unwrap();
+            let directory = Directory::open(tmp_dir.path()).await.unwrap();
             let filepaths = test_directory_file_aux(&directory, tmp_dir.path());
             assert_eq!(
                 &filepaths,
-                &["wal-00000000000000000000", "wal-00000000000000000001"]
+                &["wal-00000000000000000000", "wal-00000000000000000003"]
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_directory_truncate() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        {
+            let mut directory = Directory::open(tmp_dir.path()).await.unwrap();
+            let mut file = directory.new_file(0u64).await.unwrap();
+            file.write_all(b"hello").await.unwrap();
+            file.flush().await.unwrap();
+        }
+        {
+            let mut directory = Directory::open(tmp_dir.path()).await.unwrap();
+            let filepaths = test_directory_file_aux(&directory, tmp_dir.path());
+            assert_eq!(&filepaths, &["wal-00000000000000000000"]);
+            let mut file = directory.new_file(3u64).await.unwrap();
+            file.write_all(b"hello2").await.unwrap();
+            file.flush().await.unwrap();
+            file.write_all(b"hello3").await.unwrap();
+            file.flush().await.unwrap()
+        }
+        {
+            let directory = Directory::open(tmp_dir.path()).await.unwrap();
+            let filepaths = test_directory_file_aux(&directory, tmp_dir.path());
+            assert_eq!(
+                &filepaths,
+                &["wal-00000000000000000000", "wal-00000000000000000003"]
+            );
+        }
+        {
+            let mut directory = Directory::open(tmp_dir.path()).await.unwrap();
+            directory.truncate(3).await.unwrap();
+            let filepaths = test_directory_file_aux(&directory, tmp_dir.path());
+            assert_eq!(&filepaths, &["wal-00000000000000000003"]);
         }
     }
 }

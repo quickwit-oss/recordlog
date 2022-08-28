@@ -24,20 +24,16 @@ impl<W: AsyncWrite + Unpin> FrameWriter<W> {
         self.num_bytes_written
     }
 
-    pub async fn write_frame<B: AsRef<[u8]>>(
-        &mut self,
-        frame_type: FrameType,
-        payload: B,
-    ) -> io::Result<()> {
-        let payload = payload.as_ref();
+    pub async fn write_frame(&mut self, frame_type: FrameType, payload: &[u8]) -> io::Result<()> {
         if self.available_num_bytes_in_block() < HEADER_LEN {
             self.pad_block().await?;
         }
         assert!(payload.len() <= self.max_writable_frame_length());
         let record_len = HEADER_LEN + payload.len();
         assert!(record_len <= BLOCK_LEN);
-        Header::for_payload(frame_type, payload).serialize(&mut self.buffer[..HEADER_LEN]);
-        self.buffer[HEADER_LEN..record_len].copy_from_slice(payload);
+        let (buffer_header, buffer_record) = self.buffer[..record_len].split_at_mut(HEADER_LEN);
+        buffer_record.copy_from_slice(payload);
+        Header::for_payload(frame_type, &payload).serialize(buffer_header);
         self.current_block_len = (self.current_block_len + record_len) % BLOCK_LEN;
         self.wrt.write_all(&self.buffer[..record_len]).await?;
         self.num_bytes_written += record_len as u64;

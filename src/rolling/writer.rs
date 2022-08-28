@@ -25,24 +25,29 @@ use tokio::io::BufWriter;
 const LIMIT_NUM_BYTES: u64 = 50_000_000u64;
 
 use crate::record::RecordWriter;
-use crate::rolling::directory::WritableDirectory;
+use crate::rolling::Directory;
+use crate::Record;
 
-pub struct RecordLogWriter {
+pub(crate) struct RecordLogWriter {
     record_writer_opt: Option<RecordWriter<BufWriter<File>>>,
-    directory: super::WritableDirectory,
+    directory: super::Directory,
 }
 
 async fn new_record_writer(
-    directory: &mut WritableDirectory,
+    directory: &mut Directory,
+    position: u64,
 ) -> io::Result<RecordWriter<BufWriter<File>>> {
     // TODO sync parent dir.
-    let new_file = directory.new_file().await?;
+    let new_file = directory.new_file(position).await?;
     let buf_writer = tokio::io::BufWriter::new(new_file);
     Ok(RecordWriter::open(buf_writer))
 }
 
 impl RecordLogWriter {
-    async fn open_new_file(&mut self) -> io::Result<&mut RecordWriter<BufWriter<File>>> {
+    async fn open_new_file(
+        &mut self,
+        position: u64,
+    ) -> io::Result<&mut RecordWriter<BufWriter<File>>> {
         if let Some(mut record_writer) = self.record_writer_opt.take() {
             record_writer.flush().await?;
             record_writer
@@ -51,11 +56,15 @@ impl RecordLogWriter {
                 .sync_all()
                 .await?;
         }
-        self.record_writer_opt = Some(new_record_writer(&mut self.directory).await?);
+        self.record_writer_opt = Some(new_record_writer(&mut self.directory, position).await?);
         Ok(self.record_writer_opt.as_mut().unwrap())
     }
 
-    pub(crate) fn open(directory: WritableDirectory) -> Self {
+    pub fn num_files(&self) -> usize {
+        self.directory.num_files()
+    }
+
+    pub(crate) fn open(directory: Directory) -> Self {
         RecordLogWriter {
             directory,
             record_writer_opt: None,
@@ -70,16 +79,19 @@ impl RecordLogWriter {
         }
     }
 
-    pub async fn record_writer(&mut self) -> io::Result<&mut RecordWriter<BufWriter<File>>> {
-        if self.need_new_file() {
-            self.open_new_file().await
+    pub(crate) async fn write_record(&mut self, record: Record<'_>) -> io::Result<()> {
+        let record_writer = if self.need_new_file() {
+            self.open_new_file(record.position()).await?
         } else {
-            Ok(self.record_writer_opt.as_mut().unwrap())
-        }
+            self.record_writer_opt.as_mut().unwrap()
+        };
+        record_writer.write_record(record).await?;
+        Ok(())
     }
 
-    pub async fn write_record(&mut self, payload: &[u8]) -> io::Result<()> {
-        self.record_writer().await?.write_record(payload).await?;
+    /// Remove files that only contain records <= position.
+    pub async fn truncate(&mut self, position: u64) -> io::Result<()> {
+        self.directory.truncate(position).await?;
         Ok(())
     }
 

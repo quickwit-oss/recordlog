@@ -21,9 +21,15 @@ mod tests {
         let mut wrt: Vec<u8> = Vec::new();
         {
             let mut frame_writer = FrameWriter::create_with_aligned_write(&mut wrt);
-            frame_writer.write_frame(FrameType::FIRST, &b"abc").await?;
-            frame_writer.write_frame(FrameType::MIDDLE, &b"de").await?;
-            frame_writer.write_frame(FrameType::LAST, &b"fgh").await?;
+            frame_writer
+                .write_frame(FrameType::FIRST, &b"abc"[..])
+                .await?;
+            frame_writer
+                .write_frame(FrameType::MIDDLE, &b"de"[..])
+                .await?;
+            frame_writer
+                .write_frame(FrameType::LAST, &b"fgh"[..])
+                .await?;
             frame_writer.flush().await?;
         }
         let mut frame_reader = FrameReader::open(&wrt[..]);
@@ -51,7 +57,9 @@ mod tests {
         let mut wrt: Vec<u8> = Vec::new();
         {
             let mut frame_writer = FrameWriter::create_with_aligned_write(&mut wrt);
-            frame_writer.write_frame(FrameType::FIRST, &b"abc").await?;
+            frame_writer
+                .write_frame(FrameType::FIRST, &b"abc"[..])
+                .await?;
             frame_writer.flush().await?;
         }
         assert_eq!(wrt.len(), HEADER_LEN + 3);
@@ -69,12 +77,16 @@ mod tests {
         let mut wrt: Vec<u8> = Vec::new();
         {
             let mut frame_writer = FrameWriter::create_with_aligned_write(&mut wrt);
-            frame_writer.write_frame(FrameType::FIRST, &b"abc").await?;
+            frame_writer
+                .write_frame(FrameType::FIRST, &b"abc"[..])
+                .await?;
             frame_writer.flush().await?;
         }
         {
             let mut frame_writer = FrameWriter::create_with_aligned_write(&mut wrt);
-            frame_writer.write_frame(FrameType::MIDDLE, &b"de").await?;
+            frame_writer
+                .write_frame(FrameType::MIDDLE, &b"de"[..])
+                .await?;
             frame_writer.flush().await?;
         }
         wrt[8] = 0u8;
@@ -96,7 +108,7 @@ mod tests {
             let mut frame_writer = FrameWriter::create_with_aligned_write(&mut wrt);
             for _ in 0..repeat {
                 frame_writer
-                    .write_frame(FrameType::FULL, &[])
+                    .write_frame(FrameType::FULL, &b""[..])
                     .await
                     .unwrap();
             }

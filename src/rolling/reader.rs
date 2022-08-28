@@ -26,18 +26,19 @@ use tokio::fs::File;
 
 use crate::record::ReadRecordError;
 use crate::record::RecordReader;
-use crate::rolling::directory::ReadableDirectory;
-use crate::RecordLogWriter;
+use crate::rolling::Directory;
+use crate::rolling::RecordLogWriter;
+use crate::Record;
 
-pub struct RecordLogReader {
-    directory: ReadableDirectory,
+pub(crate) struct RecordLogReader {
+    directory: Directory,
     files: VecDeque<PathBuf>,
     reader_opt: Option<RecordReader<File>>,
 }
 
 impl RecordLogReader {
     pub async fn open(dir_path: &Path) -> io::Result<Self> {
-        let directory = ReadableDirectory::open(dir_path).await?;
+        let directory = Directory::open(dir_path).await?;
         let files = directory.file_paths().collect();
         Ok(RecordLogReader {
             files,
@@ -80,9 +81,17 @@ impl RecordLogReader {
         }
     }
 
-    pub async fn read_record(&mut self) -> Result<Option<&[u8]>, ReadRecordError> {
+    pub(crate) async fn read_record<'a>(
+        &'a mut self,
+    ) -> Result<Option<Record<'a>>, ReadRecordError> {
         if self.go_next_record().await? {
-            Ok(Some(self.reader_opt.as_ref().unwrap().record()))
+            let record: Record = self
+                .reader_opt
+                .as_ref()
+                .unwrap()
+                .record()
+                .ok_or(ReadRecordError::Corruption)?;
+            Ok(Some(record))
         } else {
             Ok(None)
         }
