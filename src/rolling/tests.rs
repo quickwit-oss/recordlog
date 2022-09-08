@@ -20,8 +20,9 @@
 
 use tempfile::tempdir;
 
+use crate::position::LocalPosition;
+use crate::rolling::record::Record;
 use crate::rolling::RecordLogReader;
-use crate::Record;
 
 #[tokio::test]
 async fn test_record_log_reader_empty() {
@@ -38,12 +39,12 @@ async fn test_record_log_reader_simple() {
         assert!(record_log_reader.read_record().await.unwrap().is_none());
         let mut record_log_writer = record_log_reader.into_writer();
         let record0 = Record::AddRecord {
-            position: 0,
+            position: LocalPosition(0),
             queue: "queue",
             payload: b"hello0",
         };
         let record1 = Record::AddRecord {
-            position: 1,
+            position: LocalPosition(1),
             queue: "queue",
             payload: b"hello1",
         };
@@ -65,12 +66,12 @@ async fn test_record_log_reader_simple() {
     {
         let mut record_log_reader = RecordLogReader::open(tempdir.path()).await.unwrap();
         let record0 = Record::AddRecord {
-            position: 0,
+            position: LocalPosition(0),
             queue: "queue",
             payload: b"hello0",
         };
         let record1 = Record::AddRecord {
-            position: 1,
+            position: LocalPosition(1),
             queue: "queue",
             payload: b"hello1",
         };
@@ -84,7 +85,7 @@ async fn test_record_log_reader_simple() {
         );
         let mut record_log_writer = record_log_reader.into_writer();
         let record2 = Record::AddRecord {
-            position: 2,
+            position: LocalPosition(2),
             queue: "queue",
             payload: b"hello2",
         };

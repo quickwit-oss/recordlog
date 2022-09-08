@@ -1,11 +1,13 @@
 mod directory;
 mod reader;
+mod record;
 mod writer;
 
-pub use self::directory::Directory;
-pub(crate) use self::reader::RecordLogReader;
-pub(crate) use self::writer::RecordLogWriter;
 use serde::{Deserialize, Serialize};
+
+pub use self::directory::Directory;
+pub use self::reader::RecordLogReader;
+pub use self::writer::RecordLogWriter;
 
 #[derive(Serialize, Deserialize)]
 enum MultiQueueRecord<'a> {

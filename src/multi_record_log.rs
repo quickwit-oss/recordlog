@@ -4,6 +4,7 @@ use std::path::Path;
 use crate::mem;
 use crate::record::ReadRecordError;
 use crate::rolling;
+use crate::rolling::LocalPosition;
 use crate::rolling::RecordLogReader;
 use crate::Record;
 
@@ -17,7 +18,7 @@ impl MultiRecordLog {
     pub async fn open(directory_path: &Path) -> Result<Self, ReadRecordError> {
         let mut record_log_reader = RecordLogReader::open(directory_path).await?;
         let mut in_mem_queues = crate::mem::MemQueues::default();
-        let mut last_position = 0u64;
+        let mut last_position = None;
         while let Some(record) = record_log_reader.read_record().await? {
             match record {
                 Record::AddRecord {
@@ -25,7 +26,6 @@ impl MultiRecordLog {
                     queue,
                     payload,
                 } => {
-                    dbg!((position, queue));
                     in_mem_queues.add_record(queue, position, payload);
                     last_position = position;
                 }
@@ -55,15 +55,16 @@ impl MultiRecordLog {
     }
 
     pub async fn append_record(&mut self, queue: &str, payload: &[u8]) -> io::Result<()> {
-        let position = self.inc_position();
-        let record = Record::AddRecord {
-            position,
-            queue,
-            payload,
-        };
-        self.record_log_writer.write_record(record).await?;
-        self.record_log_writer.flush().await?;
-        self.in_mem_queues.add_record(queue, position, payload);
+        todo!()
+        // let position = self.inc_position();
+        // let record = Record::AddRecord {
+        //     position,
+        //     queue,
+        //     payload,
+        // };
+        // self.record_log_writer.write_record(record).await?;
+        // self.record_log_writer.flush().await?;
+        // self.in_mem_queues.add_record(queue, position, payload);
         Ok(())
     }
 
@@ -72,7 +73,7 @@ impl MultiRecordLog {
         self.in_mem_queues.get_after(queue_id, position)
     }
 
-    pub async fn truncate(&mut self, queue: &str, position: u64) -> io::Result<()> {
+    pub async fn truncate(&mut self, queue: &str, local_position: LocalPosition) -> io::Result<()> {
         self.record_log_writer
             .write_record(Record::Truncate { position, queue })
             .await?;

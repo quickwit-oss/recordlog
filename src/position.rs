@@ -27,6 +27,12 @@ impl LocalPosition {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Default)]
 pub struct GlobalPosition(u64);
 
+impl From<u64> for GlobalPosition {
+    fn from(val: u64) -> Self {
+        GlobalPosition(val)
+    }
+}
+
 impl GlobalPosition {
     /// Increment the position and returns the previous value.
     pub fn inc(&mut self) -> GlobalPosition {

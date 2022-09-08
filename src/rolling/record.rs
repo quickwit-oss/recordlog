@@ -1,4 +1,7 @@
-use crate::rolling::LocalPosition;
+use std::convert::TryInto;
+
+use crate::position::LocalPosition;
+use crate::record::Serializable;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Record<'a> {

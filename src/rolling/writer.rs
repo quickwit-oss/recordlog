@@ -24,18 +24,20 @@ use tokio::io::BufWriter;
 
 const LIMIT_NUM_BYTES: u64 = 50_000_000u64;
 
+use crate::position::GlobalPosition;
 use crate::record::RecordWriter;
+use crate::rolling::record::Record;
 use crate::rolling::Directory;
-use crate::Record;
 
-pub(crate) struct RecordLogWriter {
+pub struct RecordLogWriter {
     record_writer_opt: Option<RecordWriter<BufWriter<File>>>,
     directory: super::Directory,
+    position: GlobalPosition,
 }
 
 async fn new_record_writer(
     directory: &mut Directory,
-    position: u64,
+    position: GlobalPosition,
 ) -> io::Result<RecordWriter<BufWriter<File>>> {
     // TODO sync parent dir.
     let new_file = directory.new_file(position).await?;
@@ -46,7 +48,7 @@ async fn new_record_writer(
 impl RecordLogWriter {
     async fn open_new_file(
         &mut self,
-        position: u64,
+        position: GlobalPosition,
     ) -> io::Result<&mut RecordWriter<BufWriter<File>>> {
         if let Some(mut record_writer) = self.record_writer_opt.take() {
             record_writer.flush().await?;
@@ -64,10 +66,11 @@ impl RecordLogWriter {
         self.directory.num_files()
     }
 
-    pub(crate) fn open(directory: Directory) -> Self {
+    pub fn open(directory: Directory, position: GlobalPosition) -> Self {
         RecordLogWriter {
             directory,
             record_writer_opt: None,
+            position,
         }
     }
 
@@ -79,9 +82,10 @@ impl RecordLogWriter {
         }
     }
 
-    pub(crate) async fn write_record(&mut self, record: Record<'_>) -> io::Result<()> {
+    pub async fn write_record(&mut self, record: Record<'_>) -> io::Result<()> {
+        let global_position = self.position.inc();
         let record_writer = if self.need_new_file() {
-            self.open_new_file(record.position()).await?
+            self.open_new_file(global_position).await?
         } else {
             self.record_writer_opt.as_mut().unwrap()
         };
@@ -90,7 +94,7 @@ impl RecordLogWriter {
     }
 
     /// Remove files that only contain records <= position.
-    pub async fn truncate(&mut self, position: u64) -> io::Result<()> {
+    async fn truncate(&mut self, position: GlobalPosition) -> io::Result<()> {
         self.directory.truncate(position).await?;
         Ok(())
     }

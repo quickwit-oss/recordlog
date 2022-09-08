@@ -19,19 +19,19 @@
 
 use std::collections::BTreeSet;
 use std::io;
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use tokio::fs::File;
-use tokio::fs::OpenOptions;
+use tokio::fs::{File, OpenOptions};
+
+use crate::position::GlobalPosition;
 
 pub struct Directory {
     dir: PathBuf,
     // First position in files.
-    file_set: BTreeSet<u64>,
+    file_set: BTreeSet<GlobalPosition>,
 }
 
-fn filename_to_position(file_name: &str) -> Option<u64> {
+fn filename_to_position(file_name: &str) -> Option<GlobalPosition> {
     if file_name.len() != 24 {
         return None;
     }
@@ -46,12 +46,13 @@ fn filename_to_position(file_name: &str) -> Option<u64> {
     {
         return None;
     }
-    file_name[4..].parse::<u64>().ok()
+    let global_pos = file_name[4..].parse::<u64>().ok()?;
+    Some(GlobalPosition::from(global_pos))
 }
 
 impl Directory {
     pub async fn open(dir_path: &Path) -> io::Result<Directory> {
-        let mut seq_numbers: BTreeSet<u64> = Default::default();
+        let mut seq_numbers: BTreeSet<GlobalPosition> = Default::default();
         let mut read_dir = tokio::fs::read_dir(dir_path).await?;
         while let Some(dir_entry) = read_dir.next_entry().await? {
             if !dir_entry.file_type().await?.is_file() {
@@ -76,7 +77,7 @@ impl Directory {
         self.file_set.len()
     }
 
-    pub async fn truncate(&mut self, position: u64) -> io::Result<()> {
+    pub async fn truncate(&mut self, position: GlobalPosition) -> io::Result<()> {
         if let Some(&first_file_to_retain) = self.file_set.range(..=position).last() {
             let mut removed_files = Vec::new();
             for &position in self.file_set.range(..first_file_to_retain) {
@@ -91,18 +92,18 @@ impl Directory {
         Ok(())
     }
 
-    pub fn file_paths<'a>(&'a self) -> impl Iterator<Item = PathBuf> + 'a {
+    pub fn file_paths<'a>(&'a self) -> impl Iterator<Item = (GlobalPosition, PathBuf)> + 'a {
         self.file_set
             .iter()
             .copied()
-            .map(move |seq_number| self.filepath(seq_number))
+            .map(move |seq_number| (seq_number, self.filepath(seq_number)))
     }
 
-    fn filepath(&self, seq_number: u64) -> PathBuf {
-        self.dir.join(&format!("wal-{seq_number:020}"))
+    fn filepath(&self, seq_number: GlobalPosition) -> PathBuf {
+        self.dir.join(&format!("wal-{seq_number}"))
     }
 
-    pub async fn new_file(&mut self, position: u64) -> io::Result<File> {
+    pub async fn new_file(&mut self, position: GlobalPosition) -> io::Result<File> {
         assert!(self
             .file_set
             .iter()
@@ -143,18 +144,24 @@ mod tests {
 
     #[test]
     fn test_filename_to_seq_number_simple() {
-        assert_eq!(filename_to_position("wal-00000000000000000001"), Some(1u64));
+        assert_eq!(
+            filename_to_position("wal-00000000000000000001"),
+            Some(GlobalPosition::from(1u64))
+        );
     }
 
     #[test]
     fn test_filename_to_seq_number() {
-        assert_eq!(filename_to_position("wal-00000000000000000001"), Some(1u64));
+        assert_eq!(
+            filename_to_position("wal-00000000000000000001"),
+            Some(GlobalPosition::from(1u64))
+        );
     }
 
     fn test_directory_file_aux(directory: &Directory, dir_path: &Path) -> Vec<String> {
         directory
             .file_paths()
-            .map(|filepath| {
+            .map(|(global_position, filepath)| {
                 assert_eq!(filepath.parent().unwrap(), dir_path);
                 filepath.file_name().unwrap().to_str().unwrap().to_string()
             })
@@ -166,7 +173,10 @@ mod tests {
         let tmp_dir = tempfile::tempdir().unwrap();
         {
             let mut directory = Directory::open(tmp_dir.path()).await.unwrap();
-            let mut file = directory.new_file(0u64).await.unwrap();
+            let mut file = directory
+                .new_file(GlobalPosition::from(0u64))
+                .await
+                .unwrap();
             file.write_all(b"hello").await.unwrap();
             file.flush().await.unwrap();
         }
@@ -174,7 +184,10 @@ mod tests {
             let mut directory = Directory::open(tmp_dir.path()).await.unwrap();
             let filepaths = test_directory_file_aux(&directory, tmp_dir.path());
             assert_eq!(&filepaths, &["wal-00000000000000000000"]);
-            let mut file = directory.new_file(3u64).await.unwrap();
+            let mut file = directory
+                .new_file(GlobalPosition::from(3u64))
+                .await
+                .unwrap();
             file.write_all(b"hello2").await.unwrap();
             file.flush().await.unwrap()
         }
@@ -193,7 +206,10 @@ mod tests {
         let tmp_dir = tempfile::tempdir().unwrap();
         {
             let mut directory = Directory::open(tmp_dir.path()).await.unwrap();
-            let mut file = directory.new_file(0u64).await.unwrap();
+            let mut file = directory
+                .new_file(GlobalPosition::from(0u64))
+                .await
+                .unwrap();
             file.write_all(b"hello").await.unwrap();
             file.flush().await.unwrap();
         }
@@ -201,7 +217,10 @@ mod tests {
             let mut directory = Directory::open(tmp_dir.path()).await.unwrap();
             let filepaths = test_directory_file_aux(&directory, tmp_dir.path());
             assert_eq!(&filepaths, &["wal-00000000000000000000"]);
-            let mut file = directory.new_file(3u64).await.unwrap();
+            let mut file = directory
+                .new_file(GlobalPosition::from(3u64))
+                .await
+                .unwrap();
             file.write_all(b"hello2").await.unwrap();
             file.flush().await.unwrap();
             file.write_all(b"hello3").await.unwrap();
@@ -217,7 +236,7 @@ mod tests {
         }
         {
             let mut directory = Directory::open(tmp_dir.path()).await.unwrap();
-            directory.truncate(3).await.unwrap();
+            directory.truncate(GlobalPosition::from(3)).await.unwrap();
             let filepaths = test_directory_file_aux(&directory, tmp_dir.path());
             assert_eq!(&filepaths, &["wal-00000000000000000003"]);
         }

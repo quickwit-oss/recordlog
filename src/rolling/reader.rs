@@ -19,21 +19,20 @@
 
 use std::collections::VecDeque;
 use std::io;
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tokio::fs::File;
 
-use crate::record::ReadRecordError;
-use crate::record::RecordReader;
-use crate::rolling::Directory;
-use crate::rolling::RecordLogWriter;
-use crate::Record;
+use crate::position::GlobalPosition;
+use crate::record::{ReadRecordError, RecordReader};
+use crate::rolling::record::Record;
+use crate::rolling::{Directory, RecordLogWriter};
 
-pub(crate) struct RecordLogReader {
+pub struct RecordLogReader {
     directory: Directory,
-    files: VecDeque<PathBuf>,
+    files: VecDeque<(GlobalPosition, PathBuf)>,
     reader_opt: Option<RecordReader<File>>,
+    global_position: GlobalPosition,
 }
 
 impl RecordLogReader {
@@ -44,15 +43,17 @@ impl RecordLogReader {
             files,
             directory,
             reader_opt: None,
+            global_position: GlobalPosition::default(),
         })
     }
 
     pub fn into_writer(self) -> RecordLogWriter {
-        RecordLogWriter::open(self.directory.into())
+        RecordLogWriter::open(self.directory.into(), self.global_position)
     }
 
     async fn go_next_record_current_reader(&mut self) -> Result<bool, ReadRecordError> {
         if let Some(record_reader) = self.reader_opt.as_mut() {
+            self.global_position.inc();
             record_reader.go_next().await
         } else {
             Ok(false)
@@ -71,8 +72,10 @@ impl RecordLogReader {
     }
 
     async fn load_next_file(&mut self) -> io::Result<bool> {
-        if let Some(next_file_path) = self.files.pop_front() {
+        if let Some((start_global_position, next_file_path)) = self.files.pop_front() {
+            assert!(start_global_position >= self.global_position);
             let next_file = File::open(next_file_path).await?;
+            self.global_position = start_global_position;
             let record_reader = RecordReader::open(next_file);
             self.reader_opt = Some(record_reader);
             Ok(true)
