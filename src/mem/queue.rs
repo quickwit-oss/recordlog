@@ -9,6 +9,7 @@ pub struct MemQueue {
     start_position: Position,
     record_metas: Vec<RecordMeta>,
 }
+
 impl MemQueue {
     pub fn first_retained_position(&self) -> Option<FileNumber> {
         Some(self.record_metas.first()?.file_number)
@@ -83,11 +84,6 @@ impl MemQueue {
                 (position, &self.concatenated_records[start_offset..])
             }
         })
-    }
-
-    /// Returns the first record with position greater of equal to position.
-    pub fn get_after(&self, start_from: Position) -> Option<(Position, &[u8])> {
-        self.iter_from(start_from).next()
     }
 
     /// Removes all records coming before position,

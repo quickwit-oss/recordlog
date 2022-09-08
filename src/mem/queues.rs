@@ -53,14 +53,12 @@ impl MemQueues {
     }
 
     /// Returns the first record with position greater of equal to position.
-    pub(crate) fn get_after(
-        &self,
+    pub(crate) fn iter_from<'a>(
+        &'a self,
         queue: &str,
         after_position: Position,
-    ) -> Option<(Position, &[u8])> {
-        let (position, payload) = self.queues.get(queue)?.get_after(after_position)?;
-        assert!(position >= after_position);
-        Some((position, payload))
+    ) -> Option<impl Iterator<Item = (Position, &'a [u8])> + 'a> {
+        Some(self.queues.get(queue)?.iter_from(after_position))
     }
 
     /// Removes records up to the supplied `position`,
@@ -121,32 +119,26 @@ mod tests {
             .append_record("droopy", 1.into(), Some(Position(3)), b"payer")
             .is_ok());
         assert_eq!(
-            mem_queues.get_after("droopy", Position(0)),
+            mem_queues.iter_from("droopy", Position(0)).unwrap().next(),
             Some((Position(0), &b"hello"[..]))
         );
+        let droopy: Vec<(Position, &[u8])> = mem_queues
+            .iter_from("droopy", Position(1))
+            .unwrap()
+            .collect();
         assert_eq!(
-            mem_queues.get_after("droopy", Position(1)),
-            Some((Position(1), &b"happy"[..]))
+            &droopy,
+            &[
+                (Position(1), &b"happy"[..]),
+                (Position(2), &b"tax"[..]),
+                (Position(3), &b"payer"[..])
+            ],
         );
-        assert_eq!(
-            mem_queues.get_after("droopy", Position(2)),
-            Some((Position(2), &b"tax"[..]))
-        );
-        assert_eq!(
-            mem_queues.get_after("droopy", Position(3)),
-            Some((Position(3), &b"payer"[..]))
-        );
-        assert_eq!(mem_queues.get_after("droopy", Position(4)), None);
-        assert_eq!(
-            mem_queues.get_after("fable", Position(0)),
-            Some((Position(0), &b"maitre"[..]))
-        );
-        assert_eq!(
-            mem_queues.get_after("fable", Position(1)),
-            Some((Position(1), &b"corbeau"[..]))
-        );
-        assert_eq!(mem_queues.get_after("fable", Position(2)), None);
-        assert_eq!(mem_queues.get_after("fable", Position(3)), None);
+        let fable: Vec<(Position, &[u8])> = mem_queues
+            .iter_from("fable", Position(1))
+            .unwrap()
+            .collect();
+        assert_eq!(&fable, &[(Position(1), &b"corbeau"[..])]);
     }
 
     #[test]
@@ -171,9 +163,13 @@ mod tests {
             .append_record("droopy", 1.into(), Some(Position(5)), b"payer")
             .unwrap();
         assert_eq!(mem_queues.truncate("droopy", Position(3)), None); // TODO fixme
+        let droopy: Vec<(Position, &[u8])> = mem_queues
+            .iter_from("droopy", Position(0))
+            .unwrap()
+            .collect();
         assert_eq!(
-            mem_queues.get_after("droopy", Position(0)),
-            Some((Position(4), &b"!"[..]))
+            &droopy[..],
+            &[(Position(4), &b"!"[..]), (Position(5), &b"payer"[..]),]
         );
     }
 
@@ -194,15 +190,14 @@ mod tests {
         assert!(mem_queues
             .append_record("droopy", 1.into(), Some(Position(1)), b"happy")
             .is_ok());
+        let droopy: Vec<(Position, &[u8])> = mem_queues
+            .iter_from("droopy", Position(0))
+            .unwrap()
+            .collect();
         assert_eq!(
-            mem_queues.get_after("droopy", Position(0)),
-            Some((Position(0), &b"hello"[..]))
+            &droopy[..],
+            &[(Position(0), &b"hello"[..]), (Position(1), &b"happy"[..])]
         );
-        assert_eq!(
-            mem_queues.get_after("droopy", Position(1)),
-            Some((Position(1), &b"happy"[..]))
-        );
-        assert_eq!(mem_queues.get_after("droopy", Position(2)), None);
     }
 
     #[test]
@@ -230,11 +225,11 @@ mod tests {
             .append_record("droopy", 1.into(), Some(Position(0)), b"different")
             .is_ok()); //< the string is different
                        // Right now there are no checks, on the string being equal.
-        assert_eq!(
-            mem_queues.get_after("droopy", Position(0)),
-            Some((Position(0), &b"hello"[..]))
-        );
-        assert_eq!(mem_queues.get_after("droopy", Position(1)), None);
+        let droopy: Vec<(Position, &[u8])> = mem_queues
+            .iter_from("droopy", Position(0))
+            .unwrap()
+            .collect();
+        assert_eq!(&droopy, &[(Position(0), &b"hello"[..])]);
     }
 
     #[test]
@@ -243,10 +238,11 @@ mod tests {
         assert!(mem_queues
             .append_record("droopy", 1.into(), Some(Position(5)), b"hello")
             .is_ok());
-        assert_eq!(
-            mem_queues.get_after("droopy", Position(0)),
-            Some((Position(5), &b"hello"[..]))
-        );
+        let droopy: Vec<(Position, &[u8])> = mem_queues
+            .iter_from("droopy", Position(0))
+            .unwrap()
+            .collect();
+        assert_eq!(droopy, &[(Position(5), &b"hello"[..])]);
     }
 
     #[test]
@@ -261,17 +257,17 @@ mod tests {
         assert!(mem_queues
             .append_record("droopy", 1.into(), None, b"tax")
             .is_ok());
+        let droopy: Vec<(Position, &[u8])> = mem_queues
+            .iter_from("droopy", Position(5))
+            .unwrap()
+            .collect();
         assert_eq!(
-            mem_queues.get_after("droopy", Position(5)),
-            Some((Position(5), &b"hello"[..]))
-        );
-        assert_eq!(
-            mem_queues.get_after("droopy", Position(6)),
-            Some((Position(6), &b"happy"[..]))
-        );
-        assert_eq!(
-            mem_queues.get_after("droopy", Position(7)),
-            Some((Position(7), &b"tax"[..]))
+            &droopy[..],
+            &[
+                (Position(5), &b"hello"[..]),
+                (Position(6), &b"happy"[..]),
+                (Position(7), &b"tax"[..])
+            ]
         );
     }
 }

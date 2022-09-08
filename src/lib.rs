@@ -20,6 +20,8 @@ pub mod position;
 pub mod record;
 pub mod rolling;
 
+pub(crate) mod error;
+
 #[cfg(test)]
 mod tests;
 

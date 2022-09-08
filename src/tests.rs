@@ -4,7 +4,7 @@ use crate::MultiRecordLog;
 fn read_all_records<'a>(multi_record_log: &'a MultiRecordLog, queue: &str) -> Vec<&'a [u8]> {
     let mut records = Vec::new();
     let mut next_pos = Position::default();
-    while let Some((pos, payload)) = multi_record_log.get_after(queue, next_pos) {
+    for (pos, payload) in multi_record_log.iter_from(queue, next_pos).unwrap() {
         assert_eq!(pos, next_pos);
         records.push(payload);
         next_pos.inc();

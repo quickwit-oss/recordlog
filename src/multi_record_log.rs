@@ -44,6 +44,7 @@ impl MultiRecordLog {
         })
     }
 
+    #[cfg(test)]
     pub fn num_files(&self) -> usize {
         self.record_log_writer.num_files()
     }
@@ -56,13 +57,13 @@ impl MultiRecordLog {
     pub async fn append_record(
         &mut self,
         queue: &str,
-        local_position: Option<Position>,
+        position: Option<Position>,
         payload: &[u8],
     ) -> Result<Option<Position>, AppendRecordError> {
         let file_number = self.record_log_writer.roll_if_needed().await?;
         let append_record_res =
             self.in_mem_queues
-                .append_record(queue, file_number, local_position, payload)?;
+                .append_record(queue, file_number, position, payload)?;
         let local_position = if let Some(local_position) = append_record_res {
             local_position
         } else {
@@ -79,11 +80,15 @@ impl MultiRecordLog {
     }
 
     /// Returns the first record with position greater of equal to position.
-    pub fn get_after(&self, queue: &str, position: Position) -> Option<(Position, &[u8])> {
-        self.in_mem_queues.get_after(queue, position)
+    pub fn iter_from<'a>(
+        &'a self,
+        queue: &str,
+        position: Position,
+    ) -> Option<impl Iterator<Item = (Position, &'a [u8])> + 'a> {
+        self.in_mem_queues.iter_from(queue, position)
     }
 
-    pub async fn truncate(&mut self, queue: &str, local_position: Position) -> io::Result<()> {
+    pub async fn truncate(&mut self, queue: &str, position: Position) -> io::Result<()> {
         // self.in_mem_queues.truncate(queue, position)
         // self.record_log_writer
         //     .write_record(Record::Truncate { position, queue })
