@@ -15,11 +15,11 @@
 //!
 //! # Usage
 pub mod frame;
+pub mod mem;
+pub mod position;
 pub mod record;
-// pub mod mem;
+pub mod rolling;
 // pub mod multi_record_log;
-// pub mod record;
-// pub mod rolling;
 
 // #[cfg(test)]
 // mod tests;
