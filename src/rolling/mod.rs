@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 pub use self::directory::Directory;
 pub use self::reader::RecordLogReader;
 pub use self::writer::RecordLogWriter;
+pub use self::record::Record;
 
 #[derive(Serialize, Deserialize)]
 enum MultiQueueRecord<'a> {

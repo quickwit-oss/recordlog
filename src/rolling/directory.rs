@@ -161,7 +161,7 @@ mod tests {
     fn test_directory_file_aux(directory: &Directory, dir_path: &Path) -> Vec<String> {
         directory
             .file_paths()
-            .map(|(global_position, filepath)| {
+            .map(|(_global_position, filepath)| {
                 assert_eq!(filepath.parent().unwrap(), dir_path);
                 filepath.file_name().unwrap().to_str().unwrap().to_string()
             })

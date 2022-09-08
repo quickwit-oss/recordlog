@@ -2,11 +2,11 @@ use std::io;
 use std::path::Path;
 
 use crate::mem;
+use crate::record;
 use crate::record::ReadRecordError;
 use crate::rolling;
-use crate::rolling::LocalPosition;
+use crate::rolling::Record;
 use crate::rolling::RecordLogReader;
-use crate::Record;
 
 pub struct MultiRecordLog {
     record_log_writer: rolling::RecordLogWriter,
@@ -18,7 +18,6 @@ impl MultiRecordLog {
     pub async fn open(directory_path: &Path) -> Result<Self, ReadRecordError> {
         let mut record_log_reader = RecordLogReader::open(directory_path).await?;
         let mut in_mem_queues = crate::mem::MemQueues::default();
-        let mut last_position = None;
         while let Some(record) = record_log_reader.read_record().await? {
             match record {
                 Record::AddRecord {
@@ -26,12 +25,11 @@ impl MultiRecordLog {
                     queue,
                     payload,
                 } => {
+
                     in_mem_queues.add_record(queue, position, payload);
-                    last_position = position;
                 }
                 Record::Truncate { position, queue } => {
                     in_mem_queues.truncate(queue, position);
-                    last_position = position;
                 }
             }
         }

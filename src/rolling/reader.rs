@@ -32,7 +32,7 @@ pub struct RecordLogReader {
     directory: Directory,
     files: VecDeque<(GlobalPosition, PathBuf)>,
     reader_opt: Option<RecordReader<File>>,
-    global_position: GlobalPosition,
+    global_position: GlobalPosition, //< Global position of the current record.
 }
 
 impl RecordLogReader {
@@ -47,13 +47,19 @@ impl RecordLogReader {
         })
     }
 
-    pub fn into_writer(self) -> RecordLogWriter {
-        RecordLogWriter::open(self.directory.into(), self.global_position)
+    pub fn global_position(&self) -> GlobalPosition {
+        self.global_position
+    }
+
+    /// `into_writer` should only be called after the reader has been entirely consumed.
+    pub async fn into_writer(mut self) -> Result<RecordLogWriter, ReadRecordError> {
+        assert!(!self.go_next_record().await?, "`into_writer` should only be called after the reader has been entirely consumed");
+        self.global_position.inc();
+        Ok(RecordLogWriter::open(self.directory.into(), self.global_position))
     }
 
     async fn go_next_record_current_reader(&mut self) -> Result<bool, ReadRecordError> {
         if let Some(record_reader) = self.reader_opt.as_mut() {
-            self.global_position.inc();
             record_reader.go_next().await
         } else {
             Ok(false)
@@ -61,12 +67,20 @@ impl RecordLogReader {
     }
 
     async fn go_next_record(&mut self) -> Result<bool, ReadRecordError> {
+        if self.go_next_record_current_reader().await? {
+            self.global_position.inc();
+            return Ok(true);
+        }
+        // The loop below is to deal with files containing no valid records.
+        // We do not increment the global position here, as at this point we will
+        // return the first valid record of a file and `load_next_file`
+        // will take care of setting `.global_position` accurately.
         loop {
-            if self.go_next_record_current_reader().await? {
-                return Ok(true);
-            }
             if !self.load_next_file().await? {
                 return Ok(false);
+            }
+            if self.go_next_record_current_reader().await? {
+                return Ok(true);
             }
         }
     }

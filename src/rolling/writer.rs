@@ -32,7 +32,7 @@ use crate::rolling::Directory;
 pub struct RecordLogWriter {
     record_writer_opt: Option<RecordWriter<BufWriter<File>>>,
     directory: super::Directory,
-    position: GlobalPosition,
+    position: GlobalPosition, // Value of the next record.
 }
 
 async fn new_record_writer(

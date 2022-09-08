@@ -20,6 +20,7 @@
 
 use tempfile::tempdir;
 
+use crate::position::GlobalPosition;
 use crate::position::LocalPosition;
 use crate::rolling::record::Record;
 use crate::rolling::RecordLogReader;
@@ -34,62 +35,81 @@ async fn test_record_log_reader_empty() {
 #[tokio::test]
 async fn test_record_log_reader_simple() {
     let tempdir = tempdir().unwrap();
-    {
-        let mut record_log_reader = RecordLogReader::open(tempdir.path()).await.unwrap();
-        assert!(record_log_reader.read_record().await.unwrap().is_none());
-        let mut record_log_writer = record_log_reader.into_writer();
-        let record0 = Record::AddRecord {
+    let record1 = Record::AddRecord {
             position: LocalPosition(0),
             queue: "queue",
             payload: b"hello0",
-        };
-        let record1 = Record::AddRecord {
+    };
+    let record2 = Record::AddRecord {
             position: LocalPosition(1),
             queue: "queue",
             payload: b"hello1",
-        };
-        record_log_writer.write_record(record0).await.unwrap();
+    };
+    let record3 = Record::AddRecord {
+        position: LocalPosition(2),
+        queue: "queue",
+        payload: b"hello2",
+    };
+    {
+        let mut record_log_reader = RecordLogReader::open(tempdir.path()).await.unwrap();
+        assert!(record_log_reader.read_record().await.unwrap().is_none());
+        let mut record_log_writer = record_log_reader.into_writer().await.unwrap();
         record_log_writer.write_record(record1).await.unwrap();
+        record_log_writer.write_record(record2).await.unwrap();
         record_log_writer.flush().await.unwrap();
         let mut record_log_reader = RecordLogReader::open(tempdir.path()).await.unwrap();
         assert_eq!(
             record_log_reader.read_record().await.unwrap(),
-            Some(record0)
-        );
-        assert_eq!(
-            record_log_reader.read_record().await.unwrap(),
             Some(record1)
         );
-        let mut record_log_writer = record_log_reader.into_writer();
+        assert_eq!(record_log_reader.global_position(), GlobalPosition::from(1));
+        assert_eq!(
+            record_log_reader.read_record().await.unwrap(),
+            Some(record2)
+        );
+        assert_eq!(record_log_reader.global_position(), GlobalPosition::from(2));
+        let mut record_log_writer = record_log_reader.into_writer().await.unwrap();
         record_log_writer.flush().await.unwrap()
     }
     {
         let mut record_log_reader = RecordLogReader::open(tempdir.path()).await.unwrap();
-        let record0 = Record::AddRecord {
-            position: LocalPosition(0),
-            queue: "queue",
-            payload: b"hello0",
-        };
-        let record1 = Record::AddRecord {
-            position: LocalPosition(1),
-            queue: "queue",
-            payload: b"hello1",
-        };
-        assert_eq!(
-            record_log_reader.read_record().await.unwrap(),
-            Some(record0)
-        );
         assert_eq!(
             record_log_reader.read_record().await.unwrap(),
             Some(record1)
         );
-        let mut record_log_writer = record_log_reader.into_writer();
-        let record2 = Record::AddRecord {
-            position: LocalPosition(2),
-            queue: "queue",
-            payload: b"hello2",
-        };
-        record_log_writer.write_record(record2).await.unwrap();
+        assert_eq!(
+            record_log_reader.read_record().await.unwrap(),
+            Some(record2)
+        );
+        let mut record_log_writer = record_log_reader.into_writer().await.unwrap();
+        record_log_writer.write_record(record3).await.unwrap();
         record_log_writer.flush().await.unwrap()
+    }
+    {
+        let mut record_log_reader = RecordLogReader::open(tempdir.path()).await.unwrap();
+        assert_eq!(
+            record_log_reader.read_record().await.unwrap(),
+            Some(record1)
+        );
+        assert_eq!(
+            record_log_reader.global_position(),
+            GlobalPosition::from(1),
+        );
+        assert_eq!(
+            record_log_reader.read_record().await.unwrap(),
+            Some(record2)
+        );
+        assert_eq!(
+            record_log_reader.global_position(),
+            GlobalPosition::from(2),
+        );
+        assert_eq!(
+            record_log_reader.read_record().await.unwrap(),
+            Some(record3)
+        );
+        assert_eq!(
+            record_log_reader.global_position(),
+            GlobalPosition::from(3),
+        );
     }
 }
