@@ -1,61 +1,45 @@
-// Copyright (C) 2022 Quickwit, Inc.
-//
-// Quickwit is offered under the AGPL v3.0 and as commercial software.
-// For commercial licensing, contact us at hello@quickwit.io.
-//
-// AGPL:
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as
-// published by the Free Software Foundation, either version 3 of the
-// License, or (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program. If not, see <http://www.gnu.org/licenses/>.
-
 use std::collections::VecDeque;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use tokio::fs::File;
 
-use crate::position::GlobalPosition;
+use crate::position::FileNumber;
 use crate::record::{ReadRecordError, RecordReader};
 use crate::rolling::record::Record;
 use crate::rolling::{Directory, RecordLogWriter};
 
 pub struct RecordLogReader {
     directory: Directory,
-    files: VecDeque<(GlobalPosition, PathBuf)>,
+    files: VecDeque<FileNumber>,
     reader_opt: Option<RecordReader<File>>,
-    global_position: GlobalPosition, //< Global position of the current record.
+    current_file_number: FileNumber, //< Global position of the current record.
 }
 
 impl RecordLogReader {
     pub async fn open(dir_path: &Path) -> io::Result<Self> {
         let directory = Directory::open(dir_path).await?;
-        let files = directory.file_paths().collect();
+        let files = directory.file_numbers().collect();
         Ok(RecordLogReader {
             files,
             directory,
             reader_opt: None,
-            global_position: GlobalPosition::default(),
+            current_file_number: FileNumber::default(),
         })
     }
 
-    pub fn global_position(&self) -> GlobalPosition {
-        self.global_position
+    /// Returns the file number of current record.
+    pub fn global_position(&self) -> FileNumber {
+        self.current_file_number
     }
 
     /// `into_writer` should only be called after the reader has been entirely consumed.
     pub async fn into_writer(mut self) -> Result<RecordLogWriter, ReadRecordError> {
-        assert!(!self.go_next_record().await?, "`into_writer` should only be called after the reader has been entirely consumed");
-        self.global_position.inc();
-        Ok(RecordLogWriter::open(self.directory.into(), self.global_position))
+        assert!(
+            !self.go_next_record().await?,
+            "`into_writer` should only be called after the reader has been entirely consumed"
+        );
+        Ok(RecordLogWriter::open(self.directory.into()))
     }
 
     async fn go_next_record_current_reader(&mut self) -> Result<bool, ReadRecordError> {
@@ -68,7 +52,6 @@ impl RecordLogReader {
 
     async fn go_next_record(&mut self) -> Result<bool, ReadRecordError> {
         if self.go_next_record_current_reader().await? {
-            self.global_position.inc();
             return Ok(true);
         }
         // The loop below is to deal with files containing no valid records.
@@ -86,10 +69,10 @@ impl RecordLogReader {
     }
 
     async fn load_next_file(&mut self) -> io::Result<bool> {
-        if let Some((start_global_position, next_file_path)) = self.files.pop_front() {
-            assert!(start_global_position >= self.global_position);
-            let next_file = File::open(next_file_path).await?;
-            self.global_position = start_global_position;
+        if let Some(next_file_number) = self.files.pop_front() {
+            assert!(next_file_number > self.current_file_number);
+            let next_file = self.directory.open_file(next_file_number).await?;
+            self.current_file_number = next_file_number;
             let record_reader = RecordReader::open(next_file);
             self.reader_opt = Some(record_reader);
             Ok(true)

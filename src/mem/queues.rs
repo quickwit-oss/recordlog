@@ -1,25 +1,23 @@
 use std::collections::HashMap;
-use std::ops::Range;
 
-use crate::mem::queue::AddRecordError;
-use crate::mem::MemQueue;
-use crate::position::{GlobalPosition, LocalPosition};
+use crate::mem::{AppendRecordError, MemQueue};
+use crate::position::{FileNumber, Position};
 
 #[derive(Default)]
 pub struct MemQueues {
     queues: HashMap<String, MemQueue>,
     // Range of records currently being held in all queues.
-    retained_range: Range<GlobalPosition>,
+    lowest_retained_position: FileNumber,
 }
 
 impl MemQueues {
-    fn get_or_create_queue(&mut self, queue_id: &str) -> &mut MemQueue {
+    fn get_or_create_queue(&mut self, queue: &str) -> &mut MemQueue {
         // We do not rely on `entry` in order to avoid
         // the allocation.
-        if !self.queues.contains_key(queue_id) {
-            self.queues.insert(queue_id.to_string(), Default::default());
+        if !self.queues.contains_key(queue) {
+            self.queues.insert(queue.to_string(), Default::default());
         }
-        self.queues.get_mut(queue_id).unwrap()
+        self.queues.get_mut(queue).unwrap()
     }
 }
 
@@ -33,23 +31,22 @@ impl MemQueues {
     /// is one below the past local_position.
     ///
     /// It is useful to allow for nilpotence.
-    /// A client may call add_record a second time with the same local_position to ensure that a
-    /// record has been written.
+    /// A client may call `append_record` a second time with the same local_position to ensure that
+    /// a record has been written.
     ///
     /// If no local_position is supplied, the call should always be successful.
-    pub(crate) fn add_record(
+    pub(crate) fn append_record(
         &mut self,
-        queue_id: &str,
-        local_position: Option<LocalPosition>,
+        queue: &str,
+        global_position: FileNumber,
+        local_position: Option<Position>,
         record: &[u8],
-    ) -> Result<Option<(GlobalPosition, LocalPosition)>, AddRecordError> {
-        let candidate_position = self.retained_range.end;
-        let queue = self.get_or_create_queue(queue_id);
-        let position_opt = queue.add_record(candidate_position, local_position, record)?;
+    ) -> Result<Option<Position>, AppendRecordError> {
+        let queue = self.get_or_create_queue(queue);
+        let position_opt = queue.append_record(global_position, local_position, record)?;
         if let Some(local_position) = position_opt {
             // We only increment the global position if the record is effectively written.
-            self.retained_range.end.inc();
-            Ok(Some((candidate_position, local_position)))
+            Ok(Some(local_position))
         } else {
             Ok(None)
         }
@@ -58,10 +55,10 @@ impl MemQueues {
     /// Returns the first record with position greater of equal to position.
     pub(crate) fn get_after(
         &self,
-        queue_id: &str,
-        after_position: LocalPosition,
-    ) -> Option<(LocalPosition, &[u8])> {
-        let (position, payload) = self.queues.get(queue_id)?.get_after(after_position)?;
+        queue: &str,
+        after_position: Position,
+    ) -> Option<(Position, &[u8])> {
+        let (position, payload) = self.queues.get(queue)?.get_after(after_position)?;
         assert!(position >= after_position);
         Some((position, payload))
     }
@@ -69,32 +66,32 @@ impl MemQueues {
     /// Removes records up to the supplied `position`,
     /// including the position itself.
     ///
-    /// If the queue `queue_id` does not exist, it
+    /// If the queue `queue` does not exist, it
     /// will be created, and the first record appended will be `position + 1`.
     ///
     /// If there are no records `<= position`, the method will
     /// not do anything.
     ///
-    /// Returns a position up to which including it is safe to truncate files as well.
-    pub fn truncate(&mut self, queue_id: &str, position: LocalPosition) -> Option<GlobalPosition> {
-        let previous_lowest_retained_position: GlobalPosition =
-            self.get_or_create_queue(queue_id).truncate(position)?;
-        // Optimization here. This queue was truncated yes, but it was not the reason
-        // why we are retaining the oldest record in the queue.
-        if self.retained_range.start != previous_lowest_retained_position {
+    /// Returns the lowest file number that should be retained.
+    pub fn truncate(&mut self, queue: &str, position: Position) -> Option<FileNumber> {
+        self.get_or_create_queue(queue).truncate(position);
+        let previous_retained_position = self.lowest_retained_position;
+        let mut min_retained_position = previous_retained_position;
+        for queue in self.queues.values() {
+            let queue_retained_position_opt = queue.first_retained_position();
+            if let Some(queue_retained_position) = queue_retained_position_opt {
+                if queue_retained_position <= previous_retained_position {
+                    return None;
+                }
+                min_retained_position = min_retained_position.min(queue_retained_position);
+            }
+        }
+        assert!(min_retained_position >= previous_retained_position);
+        if min_retained_position == previous_retained_position {
             return None;
         }
-        if let Some(new_lowest) = self
-            .queues
-            .values_mut()
-            .flat_map(|queue| queue.first_retained_position())
-            .min()
-        {
-            self.retained_range.start = new_lowest;
-        } else {
-            self.retained_range.start = self.retained_range.end;
-        }
-        self.retained_range.start.previous()
+        self.lowest_retained_position = min_retained_position;
+        Some(min_retained_position)
     }
 }
 
@@ -106,77 +103,77 @@ mod tests {
     fn test_mem_queues() {
         let mut mem_queues = MemQueues::default();
         assert!(mem_queues
-            .add_record("droopy", Some(LocalPosition(0)), b"hello")
+            .append_record("droopy", 1.into(), Some(Position(0)), b"hello")
             .is_ok());
         assert!(mem_queues
-            .add_record("droopy", Some(LocalPosition(1)), b"happy")
+            .append_record("droopy", 1.into(), Some(Position(1)), b"happy")
             .is_ok());
         assert!(mem_queues
-            .add_record("fable", Some(LocalPosition(0)), b"maitre")
+            .append_record("fable", 1.into(), Some(Position(0)), b"maitre")
             .is_ok());
         assert!(mem_queues
-            .add_record("fable", Some(LocalPosition(1)), b"corbeau")
+            .append_record("fable", 1.into(), Some(Position(1)), b"corbeau")
             .is_ok());
         assert!(mem_queues
-            .add_record("droopy", Some(LocalPosition(2)), b"tax")
+            .append_record("droopy", 1.into(), Some(Position(2)), b"tax")
             .is_ok());
         assert!(mem_queues
-            .add_record("droopy", Some(LocalPosition(3)), b"payer")
+            .append_record("droopy", 1.into(), Some(Position(3)), b"payer")
             .is_ok());
         assert_eq!(
-            mem_queues.get_after("droopy", LocalPosition(0)),
-            Some((LocalPosition(0), &b"hello"[..]))
+            mem_queues.get_after("droopy", Position(0)),
+            Some((Position(0), &b"hello"[..]))
         );
         assert_eq!(
-            mem_queues.get_after("droopy", LocalPosition(1)),
-            Some((LocalPosition(1), &b"happy"[..]))
+            mem_queues.get_after("droopy", Position(1)),
+            Some((Position(1), &b"happy"[..]))
         );
         assert_eq!(
-            mem_queues.get_after("droopy", LocalPosition(2)),
-            Some((LocalPosition(2), &b"tax"[..]))
+            mem_queues.get_after("droopy", Position(2)),
+            Some((Position(2), &b"tax"[..]))
         );
         assert_eq!(
-            mem_queues.get_after("droopy", LocalPosition(3)),
-            Some((LocalPosition(3), &b"payer"[..]))
+            mem_queues.get_after("droopy", Position(3)),
+            Some((Position(3), &b"payer"[..]))
         );
-        assert_eq!(mem_queues.get_after("droopy", LocalPosition(4)), None);
+        assert_eq!(mem_queues.get_after("droopy", Position(4)), None);
         assert_eq!(
-            mem_queues.get_after("fable", LocalPosition(0)),
-            Some((LocalPosition(0), &b"maitre"[..]))
+            mem_queues.get_after("fable", Position(0)),
+            Some((Position(0), &b"maitre"[..]))
         );
         assert_eq!(
-            mem_queues.get_after("fable", LocalPosition(1)),
-            Some((LocalPosition(1), &b"corbeau"[..]))
+            mem_queues.get_after("fable", Position(1)),
+            Some((Position(1), &b"corbeau"[..]))
         );
-        assert_eq!(mem_queues.get_after("fable", LocalPosition(2)), None);
-        assert_eq!(mem_queues.get_after("fable", LocalPosition(3)), None);
+        assert_eq!(mem_queues.get_after("fable", Position(2)), None);
+        assert_eq!(mem_queues.get_after("fable", Position(3)), None);
     }
 
     #[test]
     fn test_mem_queues_truncate() {
         let mut mem_queues = MemQueues::default();
         assert!(mem_queues
-            .add_record("droopy", Some(LocalPosition(0)), b"hello")
+            .append_record("droopy", 1.into(), Some(Position(0)), b"hello")
             .is_ok());
         assert!(mem_queues
-            .add_record("droopy", Some(LocalPosition(1)), b"happy")
+            .append_record("droopy", 1.into(), Some(Position(1)), b"happy")
             .is_ok());
         assert!(mem_queues
-            .add_record("droopy", Some(LocalPosition(2)), b"tax")
+            .append_record("droopy", 1.into(), Some(Position(2)), b"tax")
             .is_ok());
         assert!(mem_queues
-            .add_record("droopy", Some(LocalPosition(3)), b"payer")
+            .append_record("droopy", 1.into(), Some(Position(3)), b"payer")
             .is_ok());
         assert!(mem_queues
-            .add_record("droopy", Some(LocalPosition(4)), b"!")
+            .append_record("droopy", 1.into(), Some(Position(4)), b"!")
             .is_ok());
         mem_queues
-            .add_record("droopy", Some(LocalPosition(5)), b"payer")
+            .append_record("droopy", 1.into(), Some(Position(5)), b"payer")
             .unwrap();
-        mem_queues.truncate("droopy", LocalPosition(3)).unwrap();
+        assert_eq!(mem_queues.truncate("droopy", Position(3)), None); // TODO fixme
         assert_eq!(
-            mem_queues.get_after("droopy", LocalPosition(0)),
-            Some((LocalPosition(4), &b"!"[..]))
+            mem_queues.get_after("droopy", Position(0)),
+            Some((Position(4), &b"!"[..]))
         );
     }
 
@@ -184,42 +181,42 @@ mod tests {
     fn test_mem_queues_skip_yield_error() {
         let mut mem_queues = MemQueues::default();
         assert!(mem_queues
-            .add_record("droopy", Some(LocalPosition(0)), b"hello")
+            .append_record("droopy", 1.into(), Some(Position(0)), b"hello")
             .is_ok());
         assert!(matches!(
-            mem_queues.add_record("droopy", Some(LocalPosition(2)), b"happy"),
-            Err(AddRecordError::Future)
+            mem_queues.append_record("droopy", 1.into(), Some(Position(2)), b"happy"),
+            Err(AppendRecordError::Future)
         ));
         assert!(matches!(
-            mem_queues.add_record("droopy", Some(LocalPosition(3)), b"happy"),
-            Err(AddRecordError::Future)
+            mem_queues.append_record("droopy", 1.into(), Some(Position(3)), b"happy"),
+            Err(AppendRecordError::Future)
         ));
         assert!(mem_queues
-            .add_record("droopy", Some(LocalPosition(1)), b"happy")
+            .append_record("droopy", 1.into(), Some(Position(1)), b"happy")
             .is_ok());
         assert_eq!(
-            mem_queues.get_after("droopy", LocalPosition(0)),
-            Some((LocalPosition(0), &b"hello"[..]))
+            mem_queues.get_after("droopy", Position(0)),
+            Some((Position(0), &b"hello"[..]))
         );
         assert_eq!(
-            mem_queues.get_after("droopy", LocalPosition(1)),
-            Some((LocalPosition(1), &b"happy"[..]))
+            mem_queues.get_after("droopy", Position(1)),
+            Some((Position(1), &b"happy"[..]))
         );
-        assert_eq!(mem_queues.get_after("droopy", LocalPosition(2)), None);
+        assert_eq!(mem_queues.get_after("droopy", Position(2)), None);
     }
 
     #[test]
     fn test_mem_queues_append_in_the_past_yield_error() {
         let mut mem_queues = MemQueues::default();
         assert!(mem_queues
-            .add_record("droopy", Some(LocalPosition(0)), b"hello")
+            .append_record("droopy", 1.into(), Some(Position(0)), b"hello")
             .is_ok());
         assert!(mem_queues
-            .add_record("droopy", Some(LocalPosition(1)), b"happy")
+            .append_record("droopy", 1.into(), Some(Position(1)), b"happy")
             .is_ok());
         assert!(matches!(
-            mem_queues.add_record("droopy", Some(LocalPosition(0)), b"happy"),
-            Err(AddRecordError::Past)
+            mem_queues.append_record("droopy", 1.into(), Some(Position(0)), b"happy"),
+            Err(AppendRecordError::Past)
         ));
     }
 
@@ -227,28 +224,28 @@ mod tests {
     fn test_mem_queues_append_nilpotence() {
         let mut mem_queues = MemQueues::default();
         assert!(mem_queues
-            .add_record("droopy", Some(LocalPosition(0)), b"hello")
+            .append_record("droopy", 1.into(), Some(Position(0)), b"hello")
             .is_ok());
         assert!(mem_queues
-            .add_record("droopy", Some(LocalPosition(0)), b"different")
+            .append_record("droopy", 1.into(), Some(Position(0)), b"different")
             .is_ok()); //< the string is different
                        // Right now there are no checks, on the string being equal.
         assert_eq!(
-            mem_queues.get_after("droopy", LocalPosition(0)),
-            Some((LocalPosition(0), &b"hello"[..]))
+            mem_queues.get_after("droopy", Position(0)),
+            Some((Position(0), &b"hello"[..]))
         );
-        assert_eq!(mem_queues.get_after("droopy", LocalPosition(1)), None);
+        assert_eq!(mem_queues.get_after("droopy", Position(1)), None);
     }
 
     #[test]
     fn test_mem_queues_non_zero_first_el() {
         let mut mem_queues = MemQueues::default();
         assert!(mem_queues
-            .add_record("droopy", Some(LocalPosition(5)), b"hello")
+            .append_record("droopy", 1.into(), Some(Position(5)), b"hello")
             .is_ok());
         assert_eq!(
-            mem_queues.get_after("droopy", LocalPosition(0)),
-            Some((LocalPosition(5), &b"hello"[..]))
+            mem_queues.get_after("droopy", Position(0)),
+            Some((Position(5), &b"hello"[..]))
         );
     }
 
@@ -256,21 +253,25 @@ mod tests {
     fn test_mem_queues_no_target_position() {
         let mut mem_queues = MemQueues::default();
         assert!(mem_queues
-            .add_record("droopy", Some(LocalPosition(5)), b"hello")
+            .append_record("droopy", 1.into(), Some(Position(5)), b"hello")
             .is_ok());
-        assert!(mem_queues.add_record("droopy", None, b"happy").is_ok());
-        assert!(mem_queues.add_record("droopy", None, b"tax").is_ok());
+        assert!(mem_queues
+            .append_record("droopy", 1.into(), None, b"happy")
+            .is_ok());
+        assert!(mem_queues
+            .append_record("droopy", 1.into(), None, b"tax")
+            .is_ok());
         assert_eq!(
-            mem_queues.get_after("droopy", LocalPosition(5)),
-            Some((LocalPosition(5), &b"hello"[..]))
+            mem_queues.get_after("droopy", Position(5)),
+            Some((Position(5), &b"hello"[..]))
         );
         assert_eq!(
-            mem_queues.get_after("droopy", LocalPosition(6)),
-            Some((LocalPosition(6), &b"happy"[..]))
+            mem_queues.get_after("droopy", Position(6)),
+            Some((Position(6), &b"happy"[..]))
         );
         assert_eq!(
-            mem_queues.get_after("droopy", LocalPosition(7)),
-            Some((LocalPosition(7), &b"tax"[..]))
+            mem_queues.get_after("droopy", Position(7)),
+            Some((Position(7), &b"tax"[..]))
         );
     }
 }

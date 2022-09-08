@@ -1,25 +1,25 @@
 use std::convert::TryInto;
 
-use crate::position::LocalPosition;
+use crate::position::Position;
 use crate::record::Serializable;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Record<'a> {
-    AddRecord {
-        position: LocalPosition,
+    AppendRecord {
+        position: Position,
         queue: &'a str,
         payload: &'a [u8],
     },
     Truncate {
-        position: LocalPosition,
+        position: Position,
         queue: &'a str,
     },
 }
 
 impl<'a> Record<'a> {
-    pub fn position(&self) -> LocalPosition {
+    pub fn position(&self) -> Position {
         match self {
-            Record::AddRecord { position, .. } => *position,
+            Record::AppendRecord { position, .. } => *position,
             Record::Truncate { position, .. } => *position,
         }
     }
@@ -28,7 +28,7 @@ impl<'a> Serializable<'a> for Record<'a> {
     fn serialize(&self, buffer: &mut Vec<u8>) {
         buffer.clear();
         match *self {
-            Record::AddRecord {
+            Record::AppendRecord {
                 position,
                 queue,
                 payload,
@@ -53,21 +53,21 @@ impl<'a> Serializable<'a> for Record<'a> {
             return None;
         }
         let enum_tag = buffer[0];
-        let position = LocalPosition(u64::from_le_bytes(buffer[1..9].try_into().unwrap()));
-        let queue_id_len = u16::from_le_bytes(buffer[9..11].try_into().unwrap()) as usize;
-        let queue_id = std::str::from_utf8(&buffer[11..][..queue_id_len]).ok()?;
+        let position = Position(u64::from_le_bytes(buffer[1..9].try_into().unwrap()));
+        let queue_len = u16::from_le_bytes(buffer[9..11].try_into().unwrap()) as usize;
+        let queue = std::str::from_utf8(&buffer[11..][..queue_len]).ok()?;
         match enum_tag {
             0u8 => {
-                let payload = &buffer[11 + queue_id_len..];
-                Some(Record::AddRecord {
+                let payload = &buffer[11 + queue_len..];
+                Some(Record::AppendRecord {
                     position,
-                    queue: queue_id,
+                    queue: queue,
                     payload,
                 })
             }
             1u8 => Some(Record::Truncate {
                 position,
-                queue: queue_id,
+                queue: queue,
             }),
             _ => None,
         }

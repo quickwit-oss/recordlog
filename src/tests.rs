@@ -1,9 +1,9 @@
-use crate::position::LocalPosition;
+use crate::position::Position;
 use crate::MultiRecordLog;
 
 fn read_all_records<'a>(multi_record_log: &'a MultiRecordLog, queue: &str) -> Vec<&'a [u8]> {
     let mut records = Vec::new();
-    let mut next_pos = LocalPosition::default();
+    let mut next_pos = Position::default();
     while let Some((pos, payload)) = multi_record_log.get_after(queue, next_pos) {
         assert_eq!(pos, next_pos);
         records.push(payload);
@@ -18,23 +18,23 @@ async fn test_multi_record_log() {
     {
         let mut multi_record_log = MultiRecordLog::open(tempdir.path()).await.unwrap();
         multi_record_log
-            .append_record("queue1", b"hello")
+            .append_record("queue1", None, b"hello")
             .await
             .unwrap();
         multi_record_log
-            .append_record("queue2", b"maitre")
+            .append_record("queue2", None, b"maitre")
             .await
             .unwrap();
         multi_record_log
-            .append_record("queue1", b"happy")
+            .append_record("queue1", None, b"happy")
             .await
             .unwrap();
         multi_record_log
-            .append_record("queue1", b"tax")
+            .append_record("queue1", None, b"tax")
             .await
             .unwrap();
         multi_record_log
-            .append_record("queue2", b"corbeau")
+            .append_record("queue2", None, b"corbeau")
             .await
             .unwrap();
         assert_eq!(
@@ -50,7 +50,7 @@ async fn test_multi_record_log() {
     {
         let mut multi_record_log = MultiRecordLog::open(tempdir.path()).await.unwrap();
         multi_record_log
-            .append_record("queue1", b"bubu")
+            .append_record("queue1", None, b"bubu")
             .await
             .unwrap();
         assert_eq!(

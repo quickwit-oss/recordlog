@@ -12,14 +12,13 @@
 //! The integrity of the log is protected by a checksum at the block
 //! level. In case of corruption, some punctual record can be lost, while
 //! later records are ok.
-//!
-//! # Usage
+
 pub mod frame;
 pub mod mem;
+mod multi_record_log;
 pub mod position;
 pub mod record;
 pub mod rolling;
-mod multi_record_log;
 
 #[cfg(test)]
 mod tests;

@@ -24,7 +24,7 @@ use tokio::io::BufWriter;
 
 const LIMIT_NUM_BYTES: u64 = 50_000_000u64;
 
-use crate::position::GlobalPosition;
+use crate::position::FileNumber;
 use crate::record::RecordWriter;
 use crate::rolling::record::Record;
 use crate::rolling::Directory;
@@ -32,24 +32,17 @@ use crate::rolling::Directory;
 pub struct RecordLogWriter {
     record_writer_opt: Option<RecordWriter<BufWriter<File>>>,
     directory: super::Directory,
-    position: GlobalPosition, // Value of the next record.
 }
 
-async fn new_record_writer(
-    directory: &mut Directory,
-    position: GlobalPosition,
-) -> io::Result<RecordWriter<BufWriter<File>>> {
+async fn new_record_writer(directory: &mut Directory) -> io::Result<RecordWriter<BufWriter<File>>> {
     // TODO sync parent dir.
-    let new_file = directory.new_file(position).await?;
+    let new_file = directory.new_file().await?;
     let buf_writer = tokio::io::BufWriter::new(new_file);
     Ok(RecordWriter::open(buf_writer))
 }
 
 impl RecordLogWriter {
-    async fn open_new_file(
-        &mut self,
-        position: GlobalPosition,
-    ) -> io::Result<&mut RecordWriter<BufWriter<File>>> {
+    async fn open_new_file(&mut self) -> io::Result<()> {
         if let Some(mut record_writer) = self.record_writer_opt.take() {
             record_writer.flush().await?;
             record_writer
@@ -58,19 +51,18 @@ impl RecordLogWriter {
                 .sync_all()
                 .await?;
         }
-        self.record_writer_opt = Some(new_record_writer(&mut self.directory, position).await?);
-        Ok(self.record_writer_opt.as_mut().unwrap())
+        self.record_writer_opt = Some(new_record_writer(&mut self.directory).await?);
+        Ok(())
     }
 
     pub fn num_files(&self) -> usize {
         self.directory.num_files()
     }
 
-    pub fn open(directory: Directory, position: GlobalPosition) -> Self {
+    pub fn open(directory: Directory) -> Self {
         RecordLogWriter {
             directory,
             record_writer_opt: None,
-            position,
         }
     }
 
@@ -82,19 +74,27 @@ impl RecordLogWriter {
         }
     }
 
+    /// Returns the file number that will be used for the next append record.
+    ///
+    /// If needed, this may create new file.
+    pub async fn roll_if_needed(&mut self) -> io::Result<FileNumber> {
+        if self.need_new_file() {
+            self.open_new_file().await?;
+        }
+        Ok(self.directory.last_file_number())
+    }
+
     pub async fn write_record(&mut self, record: Record<'_>) -> io::Result<()> {
-        let global_position = self.position.inc();
-        let record_writer = if self.need_new_file() {
-            self.open_new_file(global_position).await?
-        } else {
-            self.record_writer_opt.as_mut().unwrap()
-        };
+        let record_writer = self
+            .record_writer_opt
+            .as_mut()
+            .expect("Roll if needed should have been called before");
         record_writer.write_record(record).await?;
         Ok(())
     }
 
     /// Remove files that only contain records <= position.
-    async fn truncate(&mut self, position: GlobalPosition) -> io::Result<()> {
+    async fn truncate(&mut self, position: FileNumber) -> io::Result<()> {
         self.directory.truncate(position).await?;
         Ok(())
     }

@@ -20,8 +20,7 @@
 
 use tempfile::tempdir;
 
-use crate::position::GlobalPosition;
-use crate::position::LocalPosition;
+use crate::position::{FileNumber, Position};
 use crate::rolling::record::Record;
 use crate::rolling::RecordLogReader;
 
@@ -35,18 +34,18 @@ async fn test_record_log_reader_empty() {
 #[tokio::test]
 async fn test_record_log_reader_simple() {
     let tempdir = tempdir().unwrap();
-    let record1 = Record::AddRecord {
-            position: LocalPosition(0),
-            queue: "queue",
-            payload: b"hello0",
+    let record1 = Record::AppendRecord {
+        position: Position(0),
+        queue: "queue",
+        payload: b"hello0",
     };
-    let record2 = Record::AddRecord {
-            position: LocalPosition(1),
-            queue: "queue",
-            payload: b"hello1",
+    let record2 = Record::AppendRecord {
+        position: Position(1),
+        queue: "queue",
+        payload: b"hello1",
     };
-    let record3 = Record::AddRecord {
-        position: LocalPosition(2),
+    let record3 = Record::AppendRecord {
+        position: Position(2),
         queue: "queue",
         payload: b"hello2",
     };
@@ -54,7 +53,9 @@ async fn test_record_log_reader_simple() {
         let mut record_log_reader = RecordLogReader::open(tempdir.path()).await.unwrap();
         assert!(record_log_reader.read_record().await.unwrap().is_none());
         let mut record_log_writer = record_log_reader.into_writer().await.unwrap();
+        assert_eq!(record_log_writer.roll_if_needed().await.unwrap(), 1.into());
         record_log_writer.write_record(record1).await.unwrap();
+        assert_eq!(record_log_writer.roll_if_needed().await.unwrap(), 1.into());
         record_log_writer.write_record(record2).await.unwrap();
         record_log_writer.flush().await.unwrap();
         let mut record_log_reader = RecordLogReader::open(tempdir.path()).await.unwrap();
@@ -62,13 +63,14 @@ async fn test_record_log_reader_simple() {
             record_log_reader.read_record().await.unwrap(),
             Some(record1)
         );
-        assert_eq!(record_log_reader.global_position(), GlobalPosition::from(1));
+        assert_eq!(record_log_reader.global_position(), FileNumber::from(1));
         assert_eq!(
             record_log_reader.read_record().await.unwrap(),
             Some(record2)
         );
-        assert_eq!(record_log_reader.global_position(), GlobalPosition::from(2));
+        assert_eq!(record_log_reader.global_position(), FileNumber::from(1));
         let mut record_log_writer = record_log_reader.into_writer().await.unwrap();
+        assert_eq!(record_log_writer.roll_if_needed().await.unwrap(), 2.into());
         record_log_writer.flush().await.unwrap()
     }
     {
@@ -82,6 +84,7 @@ async fn test_record_log_reader_simple() {
             Some(record2)
         );
         let mut record_log_writer = record_log_reader.into_writer().await.unwrap();
+        assert_eq!(record_log_writer.roll_if_needed().await.unwrap(), 3.into());
         record_log_writer.write_record(record3).await.unwrap();
         record_log_writer.flush().await.unwrap()
     }
@@ -91,25 +94,16 @@ async fn test_record_log_reader_simple() {
             record_log_reader.read_record().await.unwrap(),
             Some(record1)
         );
-        assert_eq!(
-            record_log_reader.global_position(),
-            GlobalPosition::from(1),
-        );
+        assert_eq!(record_log_reader.global_position(), FileNumber::from(1),);
         assert_eq!(
             record_log_reader.read_record().await.unwrap(),
             Some(record2)
         );
-        assert_eq!(
-            record_log_reader.global_position(),
-            GlobalPosition::from(2),
-        );
+        assert_eq!(record_log_reader.global_position(), FileNumber::from(1),);
         assert_eq!(
             record_log_reader.read_record().await.unwrap(),
             Some(record3)
         );
-        assert_eq!(
-            record_log_reader.global_position(),
-            GlobalPosition::from(3),
-        );
+        assert_eq!(record_log_reader.global_position(), FileNumber::from(3),);
     }
 }
