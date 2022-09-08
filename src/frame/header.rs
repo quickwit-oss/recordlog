@@ -61,7 +61,7 @@ impl Header {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum FrameType {
+pub enum FrameType {
     FULL = 1u8,
     FIRST = 2u8,
     MIDDLE = 3u8,

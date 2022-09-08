@@ -1,9 +1,10 @@
 use std::io;
+
 use tokio::io::{AsyncWrite, AsyncWriteExt, BufWriter};
 
 use crate::frame::{FrameType, Header, BLOCK_LEN, HEADER_LEN};
 
-pub(crate) struct FrameWriter<W> {
+pub struct FrameWriter<W> {
     wrt: BufWriter<W>,
     buffer: Box<[u8; BLOCK_LEN]>,
     current_block_len: usize,
@@ -11,7 +12,7 @@ pub(crate) struct FrameWriter<W> {
 }
 
 impl<W: AsyncWrite + Unpin> FrameWriter<W> {
-    pub(crate) fn create_with_aligned_write(wrt: W) -> Self {
+    pub fn create(wrt: W) -> Self {
         FrameWriter {
             wrt: BufWriter::new(wrt),
             buffer: Box::new([0u8; BLOCK_LEN]),
@@ -24,6 +25,9 @@ impl<W: AsyncWrite + Unpin> FrameWriter<W> {
         self.num_bytes_written
     }
 
+    /// Writes a frame. The payload has to be lower than the
+    /// remaining space in the frame as defined
+    /// by `max_writable_frame_length`.
     pub async fn write_frame(&mut self, frame_type: FrameType, payload: &[u8]) -> io::Result<()> {
         if self.available_num_bytes_in_block() < HEADER_LEN {
             self.pad_block().await?;
@@ -61,7 +65,7 @@ impl<W: AsyncWrite + Unpin> FrameWriter<W> {
         BLOCK_LEN - self.current_block_len
     }
 
-    /// Returns he
+    /// Returns the maximum amount of bytes that can be written.
     pub fn max_writable_frame_length(&self) -> usize {
         let available_num_bytes_in_block = self.available_num_bytes_in_block();
         if available_num_bytes_in_block >= HEADER_LEN {

@@ -22,7 +22,7 @@ pub struct FrameReader<R> {
 }
 
 #[derive(Error, Debug)]
-pub(crate) enum ReadFrameError {
+pub enum ReadFrameError {
     #[error("Io error: {0}")]
     IoError(#[from] io::Error),
     #[error("Corruption in frame")]

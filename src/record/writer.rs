@@ -1,8 +1,7 @@
-use crate::{
-    frame::{FrameType, FrameWriter},
-    Serializable,
-};
 use tokio::io::{self, AsyncWrite};
+
+use crate::frame::{FrameType, FrameWriter};
+use crate::record::Serializable;
 
 pub struct RecordWriter<W> {
     frame_writer: FrameWriter<W>,
@@ -22,7 +21,7 @@ fn frame_type(is_first_frame: bool, is_last_frame: bool) -> FrameType {
 
 impl<W: io::AsyncWrite + Unpin> RecordWriter<W> {
     pub fn open(wrt: W) -> Self {
-        let frame_writer = FrameWriter::create_with_aligned_write(wrt);
+        let frame_writer = FrameWriter::create(wrt);
         RecordWriter {
             frame_writer,
             buffer: Vec::with_capacity(10_000),

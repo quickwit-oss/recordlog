@@ -1,10 +1,10 @@
-use crate::{
-    frame::{FrameReader, ReadFrameError},
-    Serializable,
-};
 use std::io;
+
 use thiserror::Error;
 use tokio::io::AsyncRead;
+
+use crate::frame::{FrameReader, ReadFrameError};
+use crate::record::Serializable;
 
 pub struct RecordReader<R> {
     frame_reader: FrameReader<R>,

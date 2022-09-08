@@ -2,11 +2,10 @@ mod header;
 mod reader;
 mod writer;
 
-pub(crate) use self::header::FrameType;
 use self::header::Header;
-pub(crate) use self::header::HEADER_LEN;
-pub(crate) use self::reader::{FrameReader, ReadFrameError};
-pub(crate) use self::writer::FrameWriter;
+pub(crate) use self::header::{FrameType, HEADER_LEN};
+pub use self::reader::{FrameReader, ReadFrameError};
+pub use self::writer::FrameWriter;
 pub(crate) const BLOCK_LEN: usize = 32_768;
 
 #[cfg(test)]
@@ -20,7 +19,7 @@ mod tests {
     async fn test_frame_simple() -> io::Result<()> {
         let mut wrt: Vec<u8> = Vec::new();
         {
-            let mut frame_writer = FrameWriter::create_with_aligned_write(&mut wrt);
+            let mut frame_writer = FrameWriter::create(&mut wrt);
             frame_writer
                 .write_frame(FrameType::FIRST, &b"abc"[..])
                 .await?;
@@ -56,7 +55,7 @@ mod tests {
     async fn test_frame_partial() -> io::Result<()> {
         let mut wrt: Vec<u8> = Vec::new();
         {
-            let mut frame_writer = FrameWriter::create_with_aligned_write(&mut wrt);
+            let mut frame_writer = FrameWriter::create(&mut wrt);
             frame_writer
                 .write_frame(FrameType::FIRST, &b"abc"[..])
                 .await?;
@@ -76,14 +75,14 @@ mod tests {
     async fn test_frame_corruption_in_payload() -> io::Result<()> {
         let mut wrt: Vec<u8> = Vec::new();
         {
-            let mut frame_writer = FrameWriter::create_with_aligned_write(&mut wrt);
+            let mut frame_writer = FrameWriter::create(&mut wrt);
             frame_writer
                 .write_frame(FrameType::FIRST, &b"abc"[..])
                 .await?;
             frame_writer.flush().await?;
         }
         {
-            let mut frame_writer = FrameWriter::create_with_aligned_write(&mut wrt);
+            let mut frame_writer = FrameWriter::create(&mut wrt);
             frame_writer
                 .write_frame(FrameType::MIDDLE, &b"de"[..])
                 .await?;
@@ -105,7 +104,7 @@ mod tests {
     async fn repeat_empty_frame_util(repeat: usize) -> Vec<u8> {
         let mut wrt: Vec<u8> = Vec::new();
         {
-            let mut frame_writer = FrameWriter::create_with_aligned_write(&mut wrt);
+            let mut frame_writer = FrameWriter::create(&mut wrt);
             for _ in 0..repeat {
                 frame_writer
                     .write_frame(FrameType::FULL, &b""[..])
