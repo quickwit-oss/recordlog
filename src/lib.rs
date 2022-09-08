@@ -19,9 +19,9 @@ pub mod mem;
 pub mod position;
 pub mod record;
 pub mod rolling;
-// pub mod multi_record_log;
+mod multi_record_log;
 
-// #[cfg(test)]
-// mod tests;
+#[cfg(test)]
+mod tests;
 
-// pub use multi_record_log::MultiRecordLog;
+pub use multi_record_log::MultiRecordLog;

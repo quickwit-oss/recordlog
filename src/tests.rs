@@ -1,14 +1,13 @@
-use std::ops::Mul;
-
-use crate::multi_record_log;
+use crate::position::LocalPosition;
 use crate::MultiRecordLog;
 
-fn read_all_records<'a>(multi_record_log: &'a MultiRecordLog, queue: &str) -> Vec<(u64, &'a [u8])> {
+fn read_all_records<'a>(multi_record_log: &'a MultiRecordLog, queue: &str) -> Vec<&'a [u8]> {
     let mut records = Vec::new();
-    let mut next_pos = 0;
+    let mut next_pos = LocalPosition::default();
     while let Some((pos, payload)) = multi_record_log.get_after(queue, next_pos) {
-        records.push((pos, payload));
-        next_pos = pos + 1;
+        assert_eq!(pos, next_pos);
+        records.push(payload);
+        next_pos.inc();
     }
     records
 }
@@ -40,15 +39,11 @@ async fn test_multi_record_log() {
             .unwrap();
         assert_eq!(
             &read_all_records(&multi_record_log, "queue1"),
-            &[
-                (1u64, b"hello".as_slice()),
-                (3u64, b"happy".as_slice()),
-                (4u64, b"tax".as_slice())
-            ]
+            &[b"hello".as_slice(), b"happy".as_slice(), b"tax".as_slice()]
         );
         assert_eq!(
             &read_all_records(&multi_record_log, "queue2"),
-            &[(2u64, b"maitre".as_slice()), (5u64, b"corbeau".as_slice())]
+            &[b"maitre".as_slice(), b"corbeau".as_slice()]
         );
         assert_eq!(multi_record_log.num_files(), 1);
     }
@@ -61,10 +56,10 @@ async fn test_multi_record_log() {
         assert_eq!(
             &read_all_records(&multi_record_log, "queue1"),
             &[
-                (1u64, b"hello".as_slice()),
-                (3u64, b"happy".as_slice()),
-                (4u64, b"tax".as_slice()),
-                (6u64, b"bubu".as_slice())
+                b"hello".as_slice(),
+                b"happy".as_slice(),
+                b"tax".as_slice(),
+                b"bubu".as_slice()
             ]
         );
         assert_eq!(multi_record_log.num_files(), 2);
