@@ -70,6 +70,9 @@ impl MultiRecordLog {
         position: Option<u64>,
         payload: &[u8],
     ) -> Result<Option<u64>, AppendError> {
+        if !self.in_mem_queues.contains_queue(queue) {
+            return Err(AppendError::MissingQueue(queue.to_string()));
+        }
         let file_number = self.record_log_writer.roll_if_needed().await?;
         let append_record_res =
             self.in_mem_queues

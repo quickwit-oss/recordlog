@@ -28,12 +28,17 @@ impl MemQueues {
             .ok_or_else(|| MissingQueue(queue.to_string()))
     }
 
-    fn get_queue_mut(&mut self, queue: &str) -> Result<&mut MemQueue, MissingQueue> {
+    pub fn contains_queue(&mut self, queue: &str) -> bool {
+        self.queues.contains_key(queue)
+    }
+
+    fn get_or_create_queue_mut(&mut self, queue: &str) -> &mut MemQueue {
         // We do not rely on `entry` in order to avoid
         // the allocation.
-        self.queues
-            .get_mut(queue)
-            .ok_or_else(|| MissingQueue(queue.to_string()))
+        if !self.queues.contains_key(queue) {
+            self.queues.insert(queue.to_string(), MemQueue::default());
+        }
+        self.queues.get_mut(queue).unwrap()
     }
 
     /// Appends a new record.
@@ -56,7 +61,7 @@ impl MemQueues {
         local_position: Option<u64>,
         record: &[u8],
     ) -> Result<Option<u64>, AppendError> {
-        let queue = self.get_queue_mut(queue)?;
+        let queue = self.get_or_create_queue_mut(queue);
         let position_opt = queue.append_record(global_position, local_position, record)?;
         if let Some(local_position) = position_opt {
             // We only increment the global position if the record is effectively written.
@@ -88,7 +93,7 @@ impl MemQueues {
         queue: &str,
         position: u64,
     ) -> Result<Option<FileNumber>, crate::error::TruncateError> {
-        self.get_queue_mut(queue)?.truncate(position);
+        self.get_or_create_queue_mut(queue).truncate(position);
         let previous_retained_position = self.lowest_retained_position;
         let mut min_retained_position = previous_retained_position;
         for queue in self.queues.values() {
