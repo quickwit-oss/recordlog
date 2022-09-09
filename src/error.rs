@@ -19,6 +19,9 @@ impl From<AlreadyExists> for CreateQueueError {
     }
 }
 
+#[derive(Debug)]
+pub struct TouchError;
+
 #[derive(Error, Debug)]
 pub enum TruncateError {
     #[error("Missing queue: {0}")]

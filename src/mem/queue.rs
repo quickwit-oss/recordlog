@@ -1,3 +1,5 @@
+use std::ops::{Bound, RangeBounds};
+
 use crate::error::AppendError;
 use crate::position::FileNumber;
 
@@ -16,12 +18,23 @@ pub struct MemQueue {
 }
 
 impl MemQueue {
+    pub fn with_next_position(next_position: u64) -> Self {
+        MemQueue {
+            concatenated_records: Vec::new(),
+            start_position: next_position,
+            record_metas: Vec::new(),
+        }
+    }
     pub fn first_retained_position(&self) -> Option<FileNumber> {
         Some(self.record_metas.first()?.file_number)
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.record_metas.is_empty()
+    }
+
     /// Returns what should be the next position.
-    fn target_position(&self) -> u64 {
+    pub fn next_position(&self) -> u64 {
         self.start_position + self.record_metas.len() as u64
     }
 
@@ -35,11 +48,11 @@ impl MemQueue {
         target_position_opt: Option<u64>,
         payload: &[u8],
     ) -> Result<Option<u64>, AppendError> {
-        let target_position = target_position_opt.unwrap_or_else(|| self.target_position());
+        let target_position = target_position_opt.unwrap_or_else(|| self.next_position());
         if self.start_position == u64::default() && self.record_metas.is_empty() {
             self.start_position = target_position;
         }
-        let dist = (self.target_position() as i64) - (target_position as i64);
+        let dist = (self.next_position() as i64) - (target_position as i64);
         match dist {
             i64::MIN..=-1 => Err(AppendError::Future),
             // Happy path. This record is a new record.
@@ -69,23 +82,37 @@ impl MemQueue {
         Some(idx as usize)
     }
 
-    pub fn iter_from<'a>(&'a self, start_from: u64) -> impl Iterator<Item = (u64, &'a [u8])> + 'a {
-        let start_idx = self
-            .position_to_idx(start_from)
-            .unwrap_or(self.record_metas.len());
-        (start_idx..self.record_metas.len()).map(move |idx| {
-            let position = self.start_position + idx as u64;
-            let start_offset = self.record_metas[idx].start_offset;
-            if let Some(next_record_meta) = self.record_metas.get(idx + 1) {
-                let end_offset = next_record_meta.start_offset;
-                (
-                    position,
-                    &self.concatenated_records[start_offset..end_offset],
-                )
-            } else {
-                (position, &self.concatenated_records[start_offset..])
+    pub fn range<'a, R>(&'a self, range: R) -> impl Iterator<Item = (u64, &'a [u8])> + 'a
+    where R: RangeBounds<u64> + 'static {
+        let start_idx: usize = match range.start_bound() {
+            Bound::Included(&start_from) => self
+                .position_to_idx(start_from)
+                .unwrap_or(self.record_metas.len()),
+            Bound::Excluded(&start_from) => {
+                self.position_to_idx(start_from)
+                    .unwrap_or(self.record_metas.len())
+                    + 1
             }
-        })
+            Bound::Unbounded => 0,
+        };
+        (start_idx..self.record_metas.len())
+            .take_while(move |&idx| {
+                let position = self.start_position + idx as u64;
+                range.contains(&position)
+            })
+            .map(move |idx| {
+                let position = self.start_position + idx as u64;
+                let start_offset = self.record_metas[idx].start_offset;
+                if let Some(next_record_meta) = self.record_metas.get(idx + 1) {
+                    let end_offset = next_record_meta.start_offset;
+                    (
+                        position,
+                        &self.concatenated_records[start_offset..end_offset],
+                    )
+                } else {
+                    (position, &self.concatenated_records[start_offset..])
+                }
+            })
     }
 
     /// Removes all records coming before position,

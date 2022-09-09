@@ -18,6 +18,7 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 use std::io;
+use std::ops::RangeTo;
 
 use tokio::fs::File;
 use tokio::io::BufWriter;
@@ -94,8 +95,8 @@ impl RecordLogWriter {
     }
 
     /// Remove files that only contain records <= position.
-    pub async fn truncate(&mut self, file_number: FileNumber) -> io::Result<()> {
-        self.directory.truncate(file_number).await?;
+    pub async fn truncate(&mut self, file_to_remove: RangeTo<FileNumber>) -> io::Result<()> {
+        self.directory.remove_files(file_to_remove).await?;
         Ok(())
     }
 

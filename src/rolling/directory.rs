@@ -19,6 +19,7 @@
 
 use std::collections::BTreeSet;
 use std::io;
+use std::ops::RangeTo;
 use std::path::{Path, PathBuf};
 
 use tokio::fs::{File, OpenOptions};
@@ -77,17 +78,15 @@ impl Directory {
         self.file_set.len()
     }
 
-    pub async fn truncate(&mut self, file_number: FileNumber) -> io::Result<()> {
-        if let Some(&first_file_to_retain) = self.file_set.range(..=file_number).last() {
-            let mut removed_files = Vec::new();
-            for &position in self.file_set.range(..first_file_to_retain) {
-                let filepath = self.filepath(position);
-                tokio::fs::remove_file(&filepath).await?;
-                removed_files.push(position);
-            }
-            for position in removed_files {
-                self.file_set.remove(&position);
-            }
+    pub async fn remove_files(&mut self, file_to_remove: RangeTo<FileNumber>) -> io::Result<()> {
+        let mut removed_file_numbers = Vec::new();
+        for &file_number in self.file_set.range(file_to_remove) {
+            let filepath = self.filepath(file_number);
+            tokio::fs::remove_file(&filepath).await?;
+            removed_file_numbers.push(file_number);
+        }
+        for file_number in removed_file_numbers {
+            self.file_set.remove(&file_number);
         }
         Ok(())
     }
@@ -211,7 +210,7 @@ mod tests {
         }
         {
             let mut directory = Directory::open(tmp_dir.path()).await.unwrap();
-            directory.truncate(FileNumber::from(3)).await.unwrap();
+            directory.remove_files(..FileNumber::from(2)).await.unwrap();
             let file_numbers: Vec<FileNumber> = directory.file_numbers().collect();
             assert_eq!(&file_numbers, &[2.into()]);
         }

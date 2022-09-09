@@ -61,14 +61,12 @@ async fn test_record_log_reader_simple() {
         let mut record_log_reader = RecordLogReader::open(tempdir.path()).await.unwrap();
         assert_eq!(
             record_log_reader.read_record().await.unwrap(),
-            Some(record1)
+            Some((FileNumber::from(1u32), record1))
         );
-        assert_eq!(record_log_reader.global_position(), FileNumber::from(1));
         assert_eq!(
             record_log_reader.read_record().await.unwrap(),
-            Some(record2)
+            Some((FileNumber::from(1u32), record2))
         );
-        assert_eq!(record_log_reader.global_position(), FileNumber::from(1));
         let mut record_log_writer = record_log_reader.into_writer().await.unwrap();
         assert_eq!(record_log_writer.roll_if_needed().await.unwrap(), 2.into());
         record_log_writer.flush().await.unwrap()
@@ -77,11 +75,11 @@ async fn test_record_log_reader_simple() {
         let mut record_log_reader = RecordLogReader::open(tempdir.path()).await.unwrap();
         assert_eq!(
             record_log_reader.read_record().await.unwrap(),
-            Some(record1)
+            Some((FileNumber::from(1u32), record1))
         );
         assert_eq!(
             record_log_reader.read_record().await.unwrap(),
-            Some(record2)
+            Some((FileNumber::from(1u32), record2))
         );
         let mut record_log_writer = record_log_reader.into_writer().await.unwrap();
         assert_eq!(record_log_writer.roll_if_needed().await.unwrap(), 3.into());
@@ -92,18 +90,15 @@ async fn test_record_log_reader_simple() {
         let mut record_log_reader = RecordLogReader::open(tempdir.path()).await.unwrap();
         assert_eq!(
             record_log_reader.read_record().await.unwrap(),
-            Some(record1)
+            Some((FileNumber::from(1u32), record1))
         );
-        assert_eq!(record_log_reader.global_position(), FileNumber::from(1),);
         assert_eq!(
             record_log_reader.read_record().await.unwrap(),
-            Some(record2)
+            Some((FileNumber::from(1u32), record2))
         );
-        assert_eq!(record_log_reader.global_position(), FileNumber::from(1),);
         assert_eq!(
             record_log_reader.read_record().await.unwrap(),
-            Some(record3)
+            Some((FileNumber::from(3u32), record3))
         );
-        assert_eq!(record_log_reader.global_position(), FileNumber::from(3),);
     }
 }

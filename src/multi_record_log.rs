@@ -1,6 +1,9 @@
+use std::ops::{RangeBounds, RangeTo};
 use std::path::Path;
 
 use crate::error::{AppendError, CreateQueueError, MissingQueue, TruncateError};
+use crate::mem::Truncation;
+use crate::position::FileNumber;
 use crate::record::ReadRecordError;
 use crate::rolling::{Record, RecordLogReader};
 use crate::{mem, rolling};
@@ -15,8 +18,7 @@ impl MultiRecordLog {
         let mut record_log_reader = RecordLogReader::open(directory_path).await?;
         let mut in_mem_queues = crate::mem::MemQueues::default();
         loop {
-            let file_number = record_log_reader.global_position();
-            if let Some(record) = record_log_reader.read_record().await? {
+            if let Some((file_number, record)) = record_log_reader.read_record().await? {
                 match record {
                     Record::AppendRecord {
                         position,
@@ -30,8 +32,10 @@ impl MultiRecordLog {
                     Record::Truncate { position, queue } => {
                         in_mem_queues.truncate(queue, position);
                     }
-                    Record::CreateQueue { queue } => {
-                        in_mem_queues.create_queue(queue);
+                    Record::Touch { queue, position } => {
+                        in_mem_queues
+                            .touch(queue, position)
+                            .map_err(|_| ReadRecordError::Corruption)?;
                     }
                 }
             } else {
@@ -53,7 +57,7 @@ impl MultiRecordLog {
     pub async fn create_queue(&mut self, queue: &str) -> Result<(), CreateQueueError> {
         self.record_log_writer.roll_if_needed().await?;
         self.in_mem_queues.create_queue(queue)?;
-        let record = Record::CreateQueue { queue };
+        let record = Record::Touch { queue, position: 0 };
         self.record_log_writer.write_record(record).await?;
         self.record_log_writer.flush().await?;
         Ok(())
@@ -93,27 +97,45 @@ impl MultiRecordLog {
     }
 
     /// Returns the first record with position greater of equal to position.
-    pub fn iter_from<'a>(
+    pub fn range<'a, R>(
         &'a self,
         queue: &str,
-        start_from: u64,
-    ) -> Result<impl Iterator<Item = (u64, &'a [u8])> + 'a, MissingQueue> {
-        self.in_mem_queues.iter_from(queue, start_from)
+        range: R,
+    ) -> Result<impl Iterator<Item = (u64, &'a [u8])> + 'a, MissingQueue>
+    where
+        R: RangeBounds<u64> + 'static,
+    {
+        self.in_mem_queues.range(queue, range)
     }
 
     async fn log_positions(&mut self) -> Result<(), TruncateError> {
-        todo!();
+        for (queue, position) in self.in_mem_queues.empty_queue_positions() {
+            let record = Record::Touch { queue, position };
+            self.record_log_writer.write_record(record).await?;
+        }
+        self.record_log_writer.flush().await?;
+        Ok(())
     }
 
     pub async fn truncate(&mut self, queue: &str, position: u64) -> Result<(), TruncateError> {
-        let file_number_opt = self.in_mem_queues.truncate(queue, position)?;
+        if !self.in_mem_queues.contains_queue(queue) {
+            return Err(TruncateError::MissingQueue(queue.to_string()));
+        }
+        let truncation = self.in_mem_queues.truncate(queue, position);
+        let file_number = self.record_log_writer.roll_if_needed().await?;
         self.record_log_writer
             .write_record(Record::Truncate { position, queue })
             .await?;
-        if let Some(file_number) = file_number_opt {
-            self.log_positions().await?;
-            self.record_log_writer.truncate(file_number).await?;
-        }
+        self.log_positions().await?;
+        let files_to_remove: RangeTo<FileNumber> = match truncation {
+            Truncation::NoTruncation => {
+                return Ok(());
+            }
+            Truncation::RemoveFiles(files_to_remove) => ..files_to_remove.end.min(file_number),
+            Truncation::RemoveAllFiles => ..file_number,
+        };
+
+        self.record_log_writer.truncate(files_to_remove).await?;
         Ok(())
     }
 }

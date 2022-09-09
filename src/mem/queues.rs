@@ -1,6 +1,7 @@
 use std::collections::HashMap;
+use std::ops::{RangeBounds, RangeTo};
 
-use crate::error::{AlreadyExists, AppendError, MissingQueue};
+use crate::error::{AlreadyExists, AppendError, MissingQueue, TouchError};
 use crate::mem::MemQueue;
 use crate::position::FileNumber;
 
@@ -8,7 +9,7 @@ use crate::position::FileNumber;
 pub struct MemQueues {
     queues: HashMap<String, MemQueue>,
     // Range of records currently being held in all queues.
-    lowest_retained_position: FileNumber,
+    lowest_retained_file_number: Option<FileNumber>,
 }
 
 impl MemQueues {
@@ -18,6 +19,16 @@ impl MemQueues {
         }
         self.queues.insert(queue.to_string(), MemQueue::default());
         Ok(())
+    }
+
+    pub fn empty_queue_positions<'a>(&'a self) -> impl Iterator<Item = (&'a str, u64)> + 'a {
+        self.queues.iter().filter_map(|(queue, mem_queue)| {
+            if mem_queue.is_empty() {
+                Some((queue.as_str(), mem_queue.next_position()))
+            } else {
+                None
+            }
+        })
     }
 
     fn get_queue(&self, queue: &str) -> Result<&MemQueue, MissingQueue> {
@@ -41,43 +52,63 @@ impl MemQueues {
         self.queues.get_mut(queue).unwrap()
     }
 
-    /// Appends a new record.
-    ///
-    /// If a new record is successfully added, its global position and its local position
-    /// are returned.
-    ///
-    /// When supplied, a new record is really added, iff the last known record position
-    /// is one below the past local_position.
-    ///
-    /// It is useful to allow for nilpotence.
-    /// A client may call `append_record` a second time with the same local_position to ensure that
-    /// a record has been written.
-    ///
-    /// If no local_position is supplied, the call should always be successful.
-    pub(crate) fn append_record(
-        &mut self,
-        queue: &str,
-        global_position: FileNumber,
-        local_position: Option<u64>,
-        record: &[u8],
-    ) -> Result<Option<u64>, AppendError> {
-        let queue = self.get_or_create_queue_mut(queue);
-        let position_opt = queue.append_record(global_position, local_position, record)?;
-        if let Some(local_position) = position_opt {
-            // We only increment the global position if the record is effectively written.
-            Ok(Some(local_position))
+    pub fn touch(&mut self, queue: &str, start_position: u64) -> Result<(), TouchError> {
+        if self.queues.contains_key(queue) {
+            let queue = self.get_queue(queue).unwrap();
+            if queue.next_position() == start_position {
+                Ok(())
+            } else {
+                Err(TouchError)
+            }
         } else {
-            Ok(None)
+            self.queues.insert(
+                queue.to_string(),
+                MemQueue::with_next_position(start_position),
+            );
+            Ok(())
         }
     }
 
+    /// Appends a new record.
+    ///
+    /// If a new record is successfully added, its position
+    /// is returned.
+    ///
+    /// If a position is supplied, a new record is really added, iff
+    /// the last known record position is lower than the supplied position.
+    ///
+    /// If the last position is equal to the supplied position,
+    /// no new record is added, and no error is returned.
+    /// We just return `Ok(None)`.
+    ///
+    /// If no local_position is supplied, the new record position will be
+    /// 1 more than the last position.
+    pub(crate) fn append_record(
+        &mut self,
+        queue: &str,
+        file_number: FileNumber,
+        position_opt: Option<u64>,
+        record: &[u8],
+    ) -> Result<Option<u64>, AppendError> {
+        let res =
+            self.get_or_create_queue_mut(queue)
+                .append_record(file_number, position_opt, record)?;
+        if self.lowest_retained_file_number.is_none() {
+            self.lowest_retained_file_number = Some(file_number);
+        }
+        Ok(res)
+    }
+
     /// Returns the first record with position greater of equal to position.
-    pub(crate) fn iter_from<'a>(
+    pub(crate) fn range<'a, R>(
         &'a self,
         queue: &str,
-        after_position: u64,
-    ) -> Result<impl Iterator<Item = (u64, &'a [u8])> + 'a, crate::error::MissingQueue> {
-        Ok(self.get_queue(queue)?.iter_from(after_position))
+        position_range: R,
+    ) -> Result<impl Iterator<Item = (u64, &'a [u8])> + 'a, crate::error::MissingQueue>
+    where
+        R: RangeBounds<u64> + 'static,
+    {
+        Ok(self.get_queue(queue)?.range(position_range))
     }
 
     /// Removes records up to the supplied `position`,
@@ -87,31 +118,52 @@ impl MemQueues {
     /// not do anything.
     ///
     /// If one or more files should be removed,
-    /// returns the lowest file number that should be retained.
-    pub fn truncate(
-        &mut self,
-        queue: &str,
-        position: u64,
-    ) -> Result<Option<FileNumber>, crate::error::TruncateError> {
+    /// returns the range of the files that should be removed
+    pub fn truncate(&mut self, queue: &str, position: u64) -> Truncation {
+        let previous_lowest_retained_file_number =
+            if let Some(file_number) = self.lowest_retained_file_number {
+                file_number
+            } else {
+                // There are no file to remove anyway.
+                return Truncation::NoTruncation;
+            };
         self.get_or_create_queue_mut(queue).truncate(position);
-        let previous_retained_position = self.lowest_retained_position;
-        let mut min_retained_position = previous_retained_position;
+        let mut min_retained_file_number_opt: Option<FileNumber> = None;
         for queue in self.queues.values() {
-            let queue_retained_position_opt = queue.first_retained_position();
-            if let Some(queue_retained_position) = queue_retained_position_opt {
-                if queue_retained_position <= previous_retained_position {
-                    return Ok(None);
+            let queue_retained_file_opt = queue.first_retained_position();
+            if let Some(queue_retained_file) = queue_retained_file_opt {
+                assert!(queue_retained_file >= previous_lowest_retained_file_number);
+                if queue_retained_file == previous_lowest_retained_file_number {
+                    return Truncation::NoTruncation;
                 }
-                min_retained_position = min_retained_position.min(queue_retained_position);
+                min_retained_file_number_opt = Some(
+                    min_retained_file_number_opt
+                        .unwrap_or(queue_retained_file)
+                        .min(queue_retained_file),
+                );
             }
         }
-        assert!(min_retained_position >= previous_retained_position);
-        if min_retained_position == previous_retained_position {
-            return Ok(None);
+        self.lowest_retained_file_number = min_retained_file_number_opt;
+        if let Some(min_retained_file_number) = min_retained_file_number_opt {
+            assert!(min_retained_file_number >= previous_lowest_retained_file_number);
+            if min_retained_file_number == previous_lowest_retained_file_number {
+                // No file to remove.
+                return Truncation::NoTruncation;
+            }
+            Truncation::RemoveFiles(..min_retained_file_number)
+        } else {
+            // No file is retained.
+            // Let's remove everything!
+            Truncation::RemoveAllFiles
         }
-        self.lowest_retained_position = min_retained_position;
-        Ok(Some(min_retained_position))
     }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum Truncation {
+    NoTruncation,
+    RemoveFiles(RangeTo<FileNumber>),
+    RemoveAllFiles,
 }
 
 #[cfg(test)]
@@ -152,15 +204,15 @@ mod tests {
             .append_record("droopy", 1.into(), Some(3), b"payer")
             .is_ok());
         assert_eq!(
-            mem_queues.iter_from("droopy", 0).unwrap().next(),
+            mem_queues.range("droopy", 0..).unwrap().next(),
             Some((0, &b"hello"[..]))
         );
-        let droopy: Vec<(u64, &[u8])> = mem_queues.iter_from("droopy", 1).unwrap().collect();
+        let droopy: Vec<(u64, &[u8])> = mem_queues.range("droopy", 1..).unwrap().collect();
         assert_eq!(
             &droopy,
             &[(1, &b"happy"[..]), (2, &b"tax"[..]), (3, &b"payer"[..])],
         );
-        let fable: Vec<(u64, &[u8])> = mem_queues.iter_from("fable", 1).unwrap().collect();
+        let fable: Vec<(u64, &[u8])> = mem_queues.range("fable", 1..).unwrap().collect();
         assert_eq!(&fable, &[(1, &b"corbeau"[..])]);
     }
 
@@ -186,8 +238,8 @@ mod tests {
         mem_queues
             .append_record("droopy", 1.into(), Some(5), b"payer")
             .unwrap();
-        assert_eq!(mem_queues.truncate("droopy", 3).unwrap(), None); // TODO fixme
-        let droopy: Vec<(u64, &[u8])> = mem_queues.iter_from("droopy", 0).unwrap().collect();
+        assert_eq!(mem_queues.truncate("droopy", 3), Truncation::NoTruncation); // TODO fixme
+        let droopy: Vec<(u64, &[u8])> = mem_queues.range("droopy", 0..).unwrap().collect();
         assert_eq!(&droopy[..], &[(4, &b"!"[..]), (5, &b"payer"[..]),]);
     }
 
@@ -209,7 +261,7 @@ mod tests {
         assert!(mem_queues
             .append_record("droopy", 1.into(), Some(1), b"happy")
             .is_ok());
-        let droopy: Vec<(u64, &[u8])> = mem_queues.iter_from("droopy", 0).unwrap().collect();
+        let droopy: Vec<(u64, &[u8])> = mem_queues.range("droopy", 0..).unwrap().collect();
         assert_eq!(&droopy[..], &[(0, &b"hello"[..]), (1, &b"happy"[..])]);
     }
 
@@ -240,7 +292,7 @@ mod tests {
             .append_record("droopy", 1.into(), Some(0), b"different")
             .is_ok()); //< the string is different
                        // Right now there are no checks, on the string being equal.
-        let droopy: Vec<(u64, &[u8])> = mem_queues.iter_from("droopy", 0).unwrap().collect();
+        let droopy: Vec<(u64, &[u8])> = mem_queues.range("droopy", 0..).unwrap().collect();
         assert_eq!(&droopy, &[(0, &b"hello"[..])]);
     }
 
@@ -251,7 +303,7 @@ mod tests {
         assert!(mem_queues
             .append_record("droopy", 1.into(), Some(5), b"hello")
             .is_ok());
-        let droopy: Vec<(u64, &[u8])> = mem_queues.iter_from("droopy", 0).unwrap().collect();
+        let droopy: Vec<(u64, &[u8])> = mem_queues.range("droopy", 0..).unwrap().collect();
         assert_eq!(droopy, &[(5, &b"hello"[..])]);
     }
 
@@ -268,7 +320,7 @@ mod tests {
         assert!(mem_queues
             .append_record("droopy", 1.into(), None, b"tax")
             .is_ok());
-        let droopy: Vec<(u64, &[u8])> = mem_queues.iter_from("droopy", 5).unwrap().collect();
+        let droopy: Vec<(u64, &[u8])> = mem_queues.range("droopy", 5..).unwrap().collect();
         assert_eq!(
             &droopy[..],
             &[(5, &b"hello"[..]), (6, &b"happy"[..]), (7, &b"tax"[..])]
