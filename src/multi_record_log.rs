@@ -1,7 +1,7 @@
 use std::io;
 use std::path::Path;
 
-use crate::mem::AppendRecordError;
+use crate::error::{AppendError, CreateQueueError};
 use crate::record::ReadRecordError;
 use crate::rolling::{Record, RecordLogReader};
 use crate::{mem, rolling};
@@ -31,6 +31,9 @@ impl MultiRecordLog {
                     Record::Truncate { position, queue } => {
                         in_mem_queues.truncate(queue, position);
                     }
+                    Record::CreateQueue { queue } => {
+                        in_mem_queues.create_queue(queue);
+                    },
                 }
             } else {
                 break;
@@ -48,6 +51,15 @@ impl MultiRecordLog {
         self.record_log_writer.num_files()
     }
 
+    pub async fn create_queue(&mut self, queue: &str) -> Result<(), CreateQueueError> {
+        self.record_log_writer.roll_if_needed().await?;
+        self.in_mem_queues.create_queue(queue)?;
+        let record = Record::CreateQueue { queue };
+        self.record_log_writer.write_record(record).await?;
+        self.record_log_writer.flush().await?;
+        Ok(())
+    }
+
     /// Appends a record to the log.
     ///
     /// The local_position argument can optionally be passed to enforce nilpotence.
@@ -58,7 +70,7 @@ impl MultiRecordLog {
         queue: &str,
         position: Option<u64>,
         payload: &[u8],
-    ) -> Result<Option<u64>, AppendRecordError> {
+    ) -> Result<Option<u64>, AppendError> {
         let file_number = self.record_log_writer.roll_if_needed().await?;
         let append_record_res =
             self.in_mem_queues

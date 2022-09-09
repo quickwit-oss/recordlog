@@ -16,6 +16,8 @@ async fn test_multi_record_log() {
     let tempdir = tempfile::tempdir().unwrap();
     {
         let mut multi_record_log = MultiRecordLog::open(tempdir.path()).await.unwrap();
+        multi_record_log.create_queue("queue1").await.unwrap();
+        multi_record_log.create_queue("queue2").await.unwrap();
         multi_record_log
             .append_record("queue1", None, b"hello")
             .await

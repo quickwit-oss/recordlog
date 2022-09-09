@@ -20,16 +20,6 @@ impl<'a> Serializable<'a> for &'a str {
     }
 }
 
-impl<'a> Serializable<'a> for &'a [u8] {
-    fn serialize(&self, buffer: &mut Vec<u8>) {
-        buffer.clear();
-        buffer.extend_from_slice(self);
-    }
-
-    fn deserialize(buffer: &'a [u8]) -> Option<Self> {
-        Some(buffer)
-    }
-}
 
 #[cfg(test)]
 mod tests;

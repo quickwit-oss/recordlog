@@ -1,6 +1,11 @@
-use super::AppendRecordError;
-use crate::mem::RecordMeta;
+use crate::error::AppendError;
 use crate::position::FileNumber;
+
+#[derive(Clone, Copy)]
+struct RecordMeta {
+    start_offset: usize,
+    file_number: FileNumber,
+}
 
 #[derive(Default)]
 pub struct MemQueue {
@@ -23,20 +28,20 @@ impl MemQueue {
     /// Returns true iff the record was effectively added.
     /// False if the record was added in the previous call.
     ///
-    /// AppendRecordError if the record is strangely in the past or is too much in the future.
+    /// AppendError if the record is strangely in the past or is too much in the future.
     pub fn append_record(
         &mut self,
         file_number: FileNumber,
         target_position_opt: Option<u64>,
         payload: &[u8],
-    ) -> Result<Option<u64>, AppendRecordError> {
+    ) -> Result<Option<u64>, AppendError> {
         let target_position = target_position_opt.unwrap_or_else(|| self.target_position());
         if self.start_position == u64::default() && self.record_metas.is_empty() {
             self.start_position = target_position;
         }
         let dist = (self.target_position() as i64) - (target_position as i64);
         match dist {
-            i64::MIN..=-1 => Err(AppendRecordError::Future),
+            i64::MIN..=-1 => Err(AppendError::Future),
             // Happy path. This record is a new record.
             0 => {
                 let record_meta = RecordMeta {
@@ -49,7 +54,7 @@ impl MemQueue {
             }
             // This record was already added.
             1 => Ok(None),
-            2.. => Err(AppendRecordError::Past),
+            2.. => Err(AppendError::Past),
         }
     }
 
