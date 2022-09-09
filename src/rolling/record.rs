@@ -70,16 +70,11 @@ impl<'a> Serializable<'a> for Record<'a> {
                 let position = u64::from_le_bytes(buffer[1..9].try_into().unwrap());
                 let queue_len = u16::from_le_bytes(buffer[9..11].try_into().unwrap()) as usize;
                 let queue = std::str::from_utf8(&buffer[11..][..queue_len]).ok()?;
-                Some(Record::Truncate {
-                    position,
-                    queue,
-                })
+                Some(Record::Truncate { position, queue })
             }
-            2u8 => {
-                Some(Record::CreateQueue {
-                    queue: std::str::from_utf8(&buffer[1..]).ok()?
-                })
-            }
+            2u8 => Some(Record::CreateQueue {
+                queue: std::str::from_utf8(&buffer[1..]).ok()?,
+            }),
             _ => None,
         }
     }

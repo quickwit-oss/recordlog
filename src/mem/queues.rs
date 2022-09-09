@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 
-use crate::error::AlreadyExists;
-use crate::error::AppendError;
-use crate::error::MissingQueue;
+use crate::error::{AlreadyExists, AppendError, MissingQueue};
 use crate::mem::MemQueue;
 use crate::position::FileNumber;
 
@@ -14,7 +12,7 @@ pub struct MemQueues {
 }
 
 impl MemQueues {
-    pub fn create_queue(&mut self, queue: &str) ->  Result<(), AlreadyExists> {
+    pub fn create_queue(&mut self, queue: &str) -> Result<(), AlreadyExists> {
         if self.queues.contains_key(queue) {
             return Err(AlreadyExists);
         }
@@ -22,10 +20,19 @@ impl MemQueues {
         Ok(())
     }
 
-    fn get_queue(&mut self, queue: &str) -> Result<&mut MemQueue, MissingQueue> {
+    fn get_queue(&self, queue: &str) -> Result<&MemQueue, MissingQueue> {
         // We do not rely on `entry` in order to avoid
         // the allocation.
-        self.queues.get_mut(queue)
+        self.queues
+            .get(queue)
+            .ok_or_else(|| MissingQueue(queue.to_string()))
+    }
+
+    fn get_queue_mut(&mut self, queue: &str) -> Result<&mut MemQueue, MissingQueue> {
+        // We do not rely on `entry` in order to avoid
+        // the allocation.
+        self.queues
+            .get_mut(queue)
             .ok_or_else(|| MissingQueue(queue.to_string()))
     }
 
@@ -49,7 +56,7 @@ impl MemQueues {
         local_position: Option<u64>,
         record: &[u8],
     ) -> Result<Option<u64>, AppendError> {
-        let queue = self.get_queue(queue)?;
+        let queue = self.get_queue_mut(queue)?;
         let position_opt = queue.append_record(global_position, local_position, record)?;
         if let Some(local_position) = position_opt {
             // We only increment the global position if the record is effectively written.
@@ -64,22 +71,24 @@ impl MemQueues {
         &'a self,
         queue: &str,
         after_position: u64,
-    ) -> Option<impl Iterator<Item = (u64, &'a [u8])> + 'a> {
-        Some(self.queues.get(queue)?.iter_from(after_position))
+    ) -> Result<impl Iterator<Item = (u64, &'a [u8])> + 'a, crate::error::MissingQueue> {
+        Ok(self.get_queue(queue)?.iter_from(after_position))
     }
 
     /// Removes records up to the supplied `position`,
     /// including the position itself.
-    ///
-    /// If the queue `queue` does not exist, it
-    /// will be created, and the first record appended will be `position + 1`.
-    ///
+    //
     /// If there are no records `<= position`, the method will
     /// not do anything.
     ///
-    /// Returns the lowest file number that should be retained.
-    pub fn truncate(&mut self, queue: &str, position: u64) -> Result<Option<FileNumber>, crate::error::AppendError> {
-        self.get_queue(queue)?.truncate(position);
+    /// If one or more files should be removed,
+    /// returns the lowest file number that should be retained.
+    pub fn truncate(
+        &mut self,
+        queue: &str,
+        position: u64,
+    ) -> Result<Option<FileNumber>, crate::error::TruncateError> {
+        self.get_queue_mut(queue)?.truncate(position);
         let previous_retained_position = self.lowest_retained_position;
         let mut min_retained_position = previous_retained_position;
         for queue in self.queues.values() {
@@ -108,7 +117,10 @@ mod tests {
     fn test_mem_queues_already_exists() {
         let mut mem_queues = MemQueues::default();
         mem_queues.create_queue("droopy").unwrap();
-        assert!(matches!(mem_queues.create_queue("droopy"), Err(AlreadyExists)));
+        assert!(matches!(
+            mem_queues.create_queue("droopy"),
+            Err(AlreadyExists)
+        ));
     }
 
     #[test]

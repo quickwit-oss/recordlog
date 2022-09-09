@@ -1,7 +1,6 @@
-use std::io;
 use std::path::Path;
 
-use crate::error::{AppendError, CreateQueueError};
+use crate::error::{AppendError, CreateQueueError, MissingQueue, TruncateError};
 use crate::record::ReadRecordError;
 use crate::rolling::{Record, RecordLogReader};
 use crate::{mem, rolling};
@@ -33,7 +32,7 @@ impl MultiRecordLog {
                     }
                     Record::CreateQueue { queue } => {
                         in_mem_queues.create_queue(queue);
-                    },
+                    }
                 }
             } else {
                 break;
@@ -94,19 +93,24 @@ impl MultiRecordLog {
     pub fn iter_from<'a>(
         &'a self,
         queue: &str,
-        position: u64,
-    ) -> Option<impl Iterator<Item = (u64, &'a [u8])> + 'a> {
-        self.in_mem_queues.iter_from(queue, position)
+        start_from: u64,
+    ) -> Result<impl Iterator<Item = (u64, &'a [u8])> + 'a, MissingQueue> {
+        self.in_mem_queues.iter_from(queue, start_from)
     }
 
-    pub async fn truncate(&mut self, queue: &str, position: u64) -> io::Result<()> {
-        // self.in_mem_queues.truncate(queue, position)
-        // self.record_log_writer
-        //     .write_record(Record::Truncate { position, queue })
-        //     .await?;
-        // if let Some(position) = self.in_mem_queues.truncate(queue, position) {
-        //     self.record_log_writer.truncate(position).await?;
-        // }
-        todo!()
+    async fn log_positions(&mut self) -> Result<(), TruncateError> {
+        todo!();
+    }
+
+    pub async fn truncate(&mut self, queue: &str, position: u64) -> Result<(), TruncateError> {
+        let file_number_opt = self.in_mem_queues.truncate(queue, position)?;
+        self.record_log_writer
+            .write_record(Record::Truncate { position, queue })
+            .await?;
+        if let Some(file_number) = file_number_opt {
+            self.log_positions().await?;
+            self.record_log_writer.truncate(file_number).await?;
+        }
+        Ok(())
     }
 }

@@ -20,6 +20,5 @@ impl<'a> Serializable<'a> for &'a str {
     }
 }
 
-
 #[cfg(test)]
 mod tests;

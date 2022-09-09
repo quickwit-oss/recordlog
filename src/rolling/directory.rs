@@ -77,8 +77,8 @@ impl Directory {
         self.file_set.len()
     }
 
-    pub async fn truncate(&mut self, position: FileNumber) -> io::Result<()> {
-        if let Some(&first_file_to_retain) = self.file_set.range(..=position).last() {
+    pub async fn truncate(&mut self, file_number: FileNumber) -> io::Result<()> {
+        if let Some(&first_file_to_retain) = self.file_set.range(..=file_number).last() {
             let mut removed_files = Vec::new();
             for &position in self.file_set.range(..first_file_to_retain) {
                 let filepath = self.filepath(position);
@@ -105,10 +105,10 @@ impl Directory {
     }
 
     pub async fn new_file(&mut self) -> io::Result<File> {
-        let mut pos = self.last_file_number();
-        pos.inc();
-        self.file_set.insert(pos);
-        let new_filepath = self.filepath(pos);
+        let mut file_number = self.last_file_number();
+        file_number.inc();
+        self.file_set.insert(file_number);
+        let new_filepath = self.filepath(file_number);
         let file = OpenOptions::new()
             .create_new(true)
             .write(true)
@@ -117,8 +117,8 @@ impl Directory {
         Ok(file)
     }
 
-    pub async fn open_file(&mut self, global_position: FileNumber) -> io::Result<File> {
-        let filepath = self.filepath(global_position);
+    pub async fn open_file(&mut self, file_number: FileNumber) -> io::Result<File> {
+        let filepath = self.filepath(file_number);
         let file = OpenOptions::new().read(true).open(&filepath).await?;
         Ok(file)
     }

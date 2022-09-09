@@ -94,8 +94,8 @@ impl RecordLogWriter {
     }
 
     /// Remove files that only contain records <= position.
-    async fn truncate(&mut self, position: FileNumber) -> io::Result<()> {
-        self.directory.truncate(position).await?;
+    pub async fn truncate(&mut self, file_number: FileNumber) -> io::Result<()> {
+        self.directory.truncate(file_number).await?;
         Ok(())
     }
 
