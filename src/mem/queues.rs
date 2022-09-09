@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::mem::{AppendRecordError, MemQueue};
-use crate::position::{FileNumber, Position};
+use crate::position::FileNumber;
 
 #[derive(Default)]
 pub struct MemQueues {
@@ -39,9 +39,9 @@ impl MemQueues {
         &mut self,
         queue: &str,
         global_position: FileNumber,
-        local_position: Option<Position>,
+        local_position: Option<u64>,
         record: &[u8],
-    ) -> Result<Option<Position>, AppendRecordError> {
+    ) -> Result<Option<u64>, AppendRecordError> {
         let queue = self.get_or_create_queue(queue);
         let position_opt = queue.append_record(global_position, local_position, record)?;
         if let Some(local_position) = position_opt {
@@ -56,8 +56,8 @@ impl MemQueues {
     pub(crate) fn iter_from<'a>(
         &'a self,
         queue: &str,
-        after_position: Position,
-    ) -> Option<impl Iterator<Item = (Position, &'a [u8])> + 'a> {
+        after_position: u64,
+    ) -> Option<impl Iterator<Item = (u64, &'a [u8])> + 'a> {
         Some(self.queues.get(queue)?.iter_from(after_position))
     }
 
@@ -71,7 +71,7 @@ impl MemQueues {
     /// not do anything.
     ///
     /// Returns the lowest file number that should be retained.
-    pub fn truncate(&mut self, queue: &str, position: Position) -> Option<FileNumber> {
+    pub fn truncate(&mut self, queue: &str, position: u64) -> Option<FileNumber> {
         self.get_or_create_queue(queue).truncate(position);
         let previous_retained_position = self.lowest_retained_position;
         let mut min_retained_position = previous_retained_position;
@@ -101,116 +101,94 @@ mod tests {
     fn test_mem_queues() {
         let mut mem_queues = MemQueues::default();
         assert!(mem_queues
-            .append_record("droopy", 1.into(), Some(Position(0)), b"hello")
+            .append_record("droopy", 1.into(), Some(0), b"hello")
             .is_ok());
         assert!(mem_queues
-            .append_record("droopy", 1.into(), Some(Position(1)), b"happy")
+            .append_record("droopy", 1.into(), Some(1), b"happy")
             .is_ok());
         assert!(mem_queues
-            .append_record("fable", 1.into(), Some(Position(0)), b"maitre")
+            .append_record("fable", 1.into(), Some(0), b"maitre")
             .is_ok());
         assert!(mem_queues
-            .append_record("fable", 1.into(), Some(Position(1)), b"corbeau")
+            .append_record("fable", 1.into(), Some(1), b"corbeau")
             .is_ok());
         assert!(mem_queues
-            .append_record("droopy", 1.into(), Some(Position(2)), b"tax")
+            .append_record("droopy", 1.into(), Some(2), b"tax")
             .is_ok());
         assert!(mem_queues
-            .append_record("droopy", 1.into(), Some(Position(3)), b"payer")
+            .append_record("droopy", 1.into(), Some(3), b"payer")
             .is_ok());
         assert_eq!(
-            mem_queues.iter_from("droopy", Position(0)).unwrap().next(),
-            Some((Position(0), &b"hello"[..]))
+            mem_queues.iter_from("droopy", 0).unwrap().next(),
+            Some((0, &b"hello"[..]))
         );
-        let droopy: Vec<(Position, &[u8])> = mem_queues
-            .iter_from("droopy", Position(1))
-            .unwrap()
-            .collect();
+        let droopy: Vec<(u64, &[u8])> = mem_queues.iter_from("droopy", 1).unwrap().collect();
         assert_eq!(
             &droopy,
-            &[
-                (Position(1), &b"happy"[..]),
-                (Position(2), &b"tax"[..]),
-                (Position(3), &b"payer"[..])
-            ],
+            &[(1, &b"happy"[..]), (2, &b"tax"[..]), (3, &b"payer"[..])],
         );
-        let fable: Vec<(Position, &[u8])> = mem_queues
-            .iter_from("fable", Position(1))
-            .unwrap()
-            .collect();
-        assert_eq!(&fable, &[(Position(1), &b"corbeau"[..])]);
+        let fable: Vec<(u64, &[u8])> = mem_queues.iter_from("fable", 1).unwrap().collect();
+        assert_eq!(&fable, &[(1, &b"corbeau"[..])]);
     }
 
     #[test]
     fn test_mem_queues_truncate() {
         let mut mem_queues = MemQueues::default();
         assert!(mem_queues
-            .append_record("droopy", 1.into(), Some(Position(0)), b"hello")
+            .append_record("droopy", 1.into(), Some(0), b"hello")
             .is_ok());
         assert!(mem_queues
-            .append_record("droopy", 1.into(), Some(Position(1)), b"happy")
+            .append_record("droopy", 1.into(), Some(1), b"happy")
             .is_ok());
         assert!(mem_queues
-            .append_record("droopy", 1.into(), Some(Position(2)), b"tax")
+            .append_record("droopy", 1.into(), Some(2), b"tax")
             .is_ok());
         assert!(mem_queues
-            .append_record("droopy", 1.into(), Some(Position(3)), b"payer")
+            .append_record("droopy", 1.into(), Some(3), b"payer")
             .is_ok());
         assert!(mem_queues
-            .append_record("droopy", 1.into(), Some(Position(4)), b"!")
+            .append_record("droopy", 1.into(), Some(4), b"!")
             .is_ok());
         mem_queues
-            .append_record("droopy", 1.into(), Some(Position(5)), b"payer")
+            .append_record("droopy", 1.into(), Some(5), b"payer")
             .unwrap();
-        assert_eq!(mem_queues.truncate("droopy", Position(3)), None); // TODO fixme
-        let droopy: Vec<(Position, &[u8])> = mem_queues
-            .iter_from("droopy", Position(0))
-            .unwrap()
-            .collect();
-        assert_eq!(
-            &droopy[..],
-            &[(Position(4), &b"!"[..]), (Position(5), &b"payer"[..]),]
-        );
+        assert_eq!(mem_queues.truncate("droopy", 3), None); // TODO fixme
+        let droopy: Vec<(u64, &[u8])> = mem_queues.iter_from("droopy", 0).unwrap().collect();
+        assert_eq!(&droopy[..], &[(4, &b"!"[..]), (5, &b"payer"[..]),]);
     }
 
     #[test]
     fn test_mem_queues_skip_yield_error() {
         let mut mem_queues = MemQueues::default();
         assert!(mem_queues
-            .append_record("droopy", 1.into(), Some(Position(0)), b"hello")
+            .append_record("droopy", 1.into(), Some(0), b"hello")
             .is_ok());
         assert!(matches!(
-            mem_queues.append_record("droopy", 1.into(), Some(Position(2)), b"happy"),
+            mem_queues.append_record("droopy", 1.into(), Some(2), b"happy"),
             Err(AppendRecordError::Future)
         ));
         assert!(matches!(
-            mem_queues.append_record("droopy", 1.into(), Some(Position(3)), b"happy"),
+            mem_queues.append_record("droopy", 1.into(), Some(3), b"happy"),
             Err(AppendRecordError::Future)
         ));
         assert!(mem_queues
-            .append_record("droopy", 1.into(), Some(Position(1)), b"happy")
+            .append_record("droopy", 1.into(), Some(1), b"happy")
             .is_ok());
-        let droopy: Vec<(Position, &[u8])> = mem_queues
-            .iter_from("droopy", Position(0))
-            .unwrap()
-            .collect();
-        assert_eq!(
-            &droopy[..],
-            &[(Position(0), &b"hello"[..]), (Position(1), &b"happy"[..])]
-        );
+        let droopy: Vec<(u64, &[u8])> = mem_queues.iter_from("droopy", 0).unwrap().collect();
+        assert_eq!(&droopy[..], &[(0, &b"hello"[..]), (1, &b"happy"[..])]);
     }
 
     #[test]
     fn test_mem_queues_append_in_the_past_yield_error() {
         let mut mem_queues = MemQueues::default();
         assert!(mem_queues
-            .append_record("droopy", 1.into(), Some(Position(0)), b"hello")
+            .append_record("droopy", 1.into(), Some(0), b"hello")
             .is_ok());
         assert!(mem_queues
-            .append_record("droopy", 1.into(), Some(Position(1)), b"happy")
+            .append_record("droopy", 1.into(), Some(1), b"happy")
             .is_ok());
         assert!(matches!(
-            mem_queues.append_record("droopy", 1.into(), Some(Position(0)), b"happy"),
+            mem_queues.append_record("droopy", 1.into(), Some(0), b"happy"),
             Err(AppendRecordError::Past)
         ));
     }
@@ -219,37 +197,31 @@ mod tests {
     fn test_mem_queues_append_nilpotence() {
         let mut mem_queues = MemQueues::default();
         assert!(mem_queues
-            .append_record("droopy", 1.into(), Some(Position(0)), b"hello")
+            .append_record("droopy", 1.into(), Some(0), b"hello")
             .is_ok());
         assert!(mem_queues
-            .append_record("droopy", 1.into(), Some(Position(0)), b"different")
+            .append_record("droopy", 1.into(), Some(0), b"different")
             .is_ok()); //< the string is different
                        // Right now there are no checks, on the string being equal.
-        let droopy: Vec<(Position, &[u8])> = mem_queues
-            .iter_from("droopy", Position(0))
-            .unwrap()
-            .collect();
-        assert_eq!(&droopy, &[(Position(0), &b"hello"[..])]);
+        let droopy: Vec<(u64, &[u8])> = mem_queues.iter_from("droopy", 0).unwrap().collect();
+        assert_eq!(&droopy, &[(0, &b"hello"[..])]);
     }
 
     #[test]
     fn test_mem_queues_non_zero_first_el() {
         let mut mem_queues = MemQueues::default();
         assert!(mem_queues
-            .append_record("droopy", 1.into(), Some(Position(5)), b"hello")
+            .append_record("droopy", 1.into(), Some(5), b"hello")
             .is_ok());
-        let droopy: Vec<(Position, &[u8])> = mem_queues
-            .iter_from("droopy", Position(0))
-            .unwrap()
-            .collect();
-        assert_eq!(droopy, &[(Position(5), &b"hello"[..])]);
+        let droopy: Vec<(u64, &[u8])> = mem_queues.iter_from("droopy", 0).unwrap().collect();
+        assert_eq!(droopy, &[(5, &b"hello"[..])]);
     }
 
     #[test]
     fn test_mem_queues_no_target_position() {
         let mut mem_queues = MemQueues::default();
         assert!(mem_queues
-            .append_record("droopy", 1.into(), Some(Position(5)), b"hello")
+            .append_record("droopy", 1.into(), Some(5), b"hello")
             .is_ok());
         assert!(mem_queues
             .append_record("droopy", 1.into(), None, b"happy")
@@ -257,17 +229,10 @@ mod tests {
         assert!(mem_queues
             .append_record("droopy", 1.into(), None, b"tax")
             .is_ok());
-        let droopy: Vec<(Position, &[u8])> = mem_queues
-            .iter_from("droopy", Position(5))
-            .unwrap()
-            .collect();
+        let droopy: Vec<(u64, &[u8])> = mem_queues.iter_from("droopy", 5).unwrap().collect();
         assert_eq!(
             &droopy[..],
-            &[
-                (Position(5), &b"hello"[..]),
-                (Position(6), &b"happy"[..]),
-                (Position(7), &b"tax"[..])
-            ]
+            &[(5, &b"hello"[..]), (6, &b"happy"[..]), (7, &b"tax"[..])]
         );
     }
 }

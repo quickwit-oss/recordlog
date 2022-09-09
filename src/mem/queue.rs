@@ -1,12 +1,12 @@
 use super::AppendRecordError;
 use crate::mem::RecordMeta;
-use crate::position::{FileNumber, Position};
+use crate::position::FileNumber;
 
 #[derive(Default)]
 pub struct MemQueue {
     // Concatenated records
     concatenated_records: Vec<u8>,
-    start_position: Position,
+    start_position: u64,
     record_metas: Vec<RecordMeta>,
 }
 
@@ -16,7 +16,7 @@ impl MemQueue {
     }
 
     /// Returns what should be the next position.
-    fn target_position(&self) -> Position {
+    fn target_position(&self) -> u64 {
         self.start_position + self.record_metas.len() as u64
     }
 
@@ -27,14 +27,14 @@ impl MemQueue {
     pub fn append_record(
         &mut self,
         file_number: FileNumber,
-        target_position_opt: Option<Position>,
+        target_position_opt: Option<u64>,
         payload: &[u8],
-    ) -> Result<Option<Position>, AppendRecordError> {
+    ) -> Result<Option<u64>, AppendRecordError> {
         let target_position = target_position_opt.unwrap_or_else(|| self.target_position());
-        if self.start_position == Position::default() && self.record_metas.is_empty() {
+        if self.start_position == u64::default() && self.record_metas.is_empty() {
             self.start_position = target_position;
         }
-        let dist = self.target_position() - target_position;
+        let dist = (self.target_position() as i64) - (target_position as i64);
         match dist {
             i64::MIN..=-1 => Err(AppendRecordError::Future),
             // Happy path. This record is a new record.
@@ -53,7 +53,7 @@ impl MemQueue {
         }
     }
 
-    fn position_to_idx(&self, position: Position) -> Option<usize> {
+    fn position_to_idx(&self, position: u64) -> Option<usize> {
         if self.start_position > position {
             return Some(0);
         }
@@ -64,10 +64,7 @@ impl MemQueue {
         Some(idx as usize)
     }
 
-    pub fn iter_from<'a>(
-        &'a self,
-        start_from: Position,
-    ) -> impl Iterator<Item = (Position, &'a [u8])> + 'a {
+    pub fn iter_from<'a>(&'a self, start_from: u64) -> impl Iterator<Item = (u64, &'a [u8])> + 'a {
         let start_idx = self
             .position_to_idx(start_from)
             .unwrap_or(self.record_metas.len());
@@ -88,7 +85,7 @@ impl MemQueue {
 
     /// Removes all records coming before position,
     /// and including the record at "position".
-    pub fn truncate(&mut self, truncate_up_to_pos: Position) {
+    pub fn truncate(&mut self, truncate_up_to_pos: u64) {
         if self.start_position > truncate_up_to_pos {
             return;
         }

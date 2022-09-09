@@ -24,8 +24,8 @@ enum MultiQueueRecord<'a> {
     /// be deleted and will removing the file accordingly.
     Truncate { queue: &'a str, seq_number: u64 },
     /// After removing a log file, in order to avoid losing the last seq_number,
-    /// we can append a `LastPosition` record to the log.
-    LastPosition { queue: &'a str, seq_number: u64 },
+    /// we can append a `Lastu64` record to the log.
+    Lastu64 { queue: &'a str, seq_number: u64 },
 }
 
 #[cfg(test)]

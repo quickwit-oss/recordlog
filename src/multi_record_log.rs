@@ -2,7 +2,6 @@ use std::io;
 use std::path::Path;
 
 use crate::mem::AppendRecordError;
-use crate::position::Position;
 use crate::record::ReadRecordError;
 use crate::rolling::{Record, RecordLogReader};
 use crate::{mem, rolling};
@@ -57,9 +56,9 @@ impl MultiRecordLog {
     pub async fn append_record(
         &mut self,
         queue: &str,
-        position: Option<Position>,
+        position: Option<u64>,
         payload: &[u8],
-    ) -> Result<Option<Position>, AppendRecordError> {
+    ) -> Result<Option<u64>, AppendRecordError> {
         let file_number = self.record_log_writer.roll_if_needed().await?;
         let append_record_res =
             self.in_mem_queues
@@ -83,12 +82,12 @@ impl MultiRecordLog {
     pub fn iter_from<'a>(
         &'a self,
         queue: &str,
-        position: Position,
-    ) -> Option<impl Iterator<Item = (Position, &'a [u8])> + 'a> {
+        position: u64,
+    ) -> Option<impl Iterator<Item = (u64, &'a [u8])> + 'a> {
         self.in_mem_queues.iter_from(queue, position)
     }
 
-    pub async fn truncate(&mut self, queue: &str, position: Position) -> io::Result<()> {
+    pub async fn truncate(&mut self, queue: &str, position: u64) -> io::Result<()> {
         // self.in_mem_queues.truncate(queue, position)
         // self.record_log_writer
         //     .write_record(Record::Truncate { position, queue })

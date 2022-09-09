@@ -20,7 +20,7 @@
 
 use tempfile::tempdir;
 
-use crate::position::{FileNumber, Position};
+use crate::position::FileNumber;
 use crate::rolling::record::Record;
 use crate::rolling::RecordLogReader;
 
@@ -35,17 +35,17 @@ async fn test_record_log_reader_empty() {
 async fn test_record_log_reader_simple() {
     let tempdir = tempdir().unwrap();
     let record1 = Record::AppendRecord {
-        position: Position(0),
+        position: 0,
         queue: "queue",
         payload: b"hello0",
     };
     let record2 = Record::AppendRecord {
-        position: Position(1),
+        position: 1,
         queue: "queue",
         payload: b"hello1",
     };
     let record3 = Record::AppendRecord {
-        position: Position(2),
+        position: 2,
         queue: "queue",
         payload: b"hello2",
     };
