@@ -45,30 +45,19 @@ impl MemQueue {
     pub fn append_record(
         &mut self,
         file_number: FileNumber,
-        target_position_opt: Option<u64>,
+        target_position: u64,
         payload: &[u8],
-    ) -> Result<Option<u64>, AppendError> {
-        let target_position = target_position_opt.unwrap_or_else(|| self.next_position());
-        if self.start_position == u64::default() && self.record_metas.is_empty() {
+    ) -> Result<(), AppendError> {
+        if self.start_position == 0u64 && self.record_metas.is_empty() {
             self.start_position = target_position;
         }
-        let dist = (self.next_position() as i64) - (target_position as i64);
-        match dist {
-            i64::MIN..=-1 => Err(AppendError::Future),
-            // Happy path. This record is a new record.
-            0 => {
-                let record_meta = RecordMeta {
-                    start_offset: self.concatenated_records.len(),
-                    file_number,
-                };
-                self.record_metas.push(record_meta);
-                self.concatenated_records.extend_from_slice(payload);
-                Ok(Some(target_position))
-            }
-            // This record was already added.
-            1 => Ok(None),
-            2.. => Err(AppendError::Past),
-        }
+        let record_meta = RecordMeta {
+            start_offset: self.concatenated_records.len(),
+            file_number,
+        };
+        self.record_metas.push(record_meta);
+        self.concatenated_records.extend_from_slice(payload);
+        Ok(())
     }
 
     fn position_to_idx(&self, position: u64) -> Option<usize> {
