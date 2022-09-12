@@ -46,7 +46,7 @@ async fn test_multi_record_log() {
             &read_all_records(&multi_record_log, "queue2"),
             &[b"maitre".as_slice(), b"corbeau".as_slice()]
         );
-        assert_eq!(multi_record_log.num_files(), 1);
+        assert_eq!(multi_record_log.first_last_files(), Some((1, 1)));
     }
     {
         let mut multi_record_log = MultiRecordLog::open(tempdir.path()).await.unwrap();
@@ -63,7 +63,7 @@ async fn test_multi_record_log() {
                 b"bubu".as_slice()
             ]
         );
-        assert_eq!(multi_record_log.num_files(), 2);
+        assert_eq!(multi_record_log.first_last_files(), Some((1, 2)));
     }
 }
 
@@ -90,12 +90,12 @@ async fn test_multi_record_position_known_after_truncate() {
                 .unwrap(),
             Some(1)
         );
-        assert_eq!(multi_record_log.num_files(), 2);
+        assert_eq!(multi_record_log.first_last_files(), Some((1, 2)));
     }
     {
         let mut multi_record_log = MultiRecordLog::open(tempdir.path()).await.unwrap();
-        multi_record_log.truncate("queue", 3).await.unwrap();
-        assert_eq!(multi_record_log.num_files(), 1);
+        multi_record_log.truncate("queue",1).await.unwrap();
+        assert_eq!(multi_record_log.first_last_files(), Some((3, 3)));
     }
     {
         let mut multi_record_log = MultiRecordLog::open(tempdir.path()).await.unwrap();

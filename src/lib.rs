@@ -12,6 +12,7 @@
 //! The integrity of the log is protected by a checksum at the block
 //! level. In case of corruption, some punctual record can be lost, while
 //! later records are ok.
+#![allow(clippy::collapsible_if)]
 
 pub mod frame;
 pub mod mem;

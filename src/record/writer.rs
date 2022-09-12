@@ -12,10 +12,10 @@ impl<W: io::AsyncWrite> RecordWriter<W> {}
 
 fn frame_type(is_first_frame: bool, is_last_frame: bool) -> FrameType {
     match (is_first_frame, is_last_frame) {
-        (true, true) => FrameType::FULL,
-        (true, false) => FrameType::FIRST,
-        (false, true) => FrameType::LAST,
-        (false, false) => FrameType::MIDDLE,
+        (true, true) => FrameType::Full,
+        (true, false) => FrameType::First,
+        (false, true) => FrameType::Last,
+        (false, false) => FrameType::Middle,
     }
 }
 

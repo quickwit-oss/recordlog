@@ -53,9 +53,7 @@ async fn test_record_log_reader_simple() {
         let mut record_log_reader = RecordLogReader::open(tempdir.path()).await.unwrap();
         assert!(record_log_reader.read_record().await.unwrap().is_none());
         let mut record_log_writer = record_log_reader.into_writer().await.unwrap();
-        assert_eq!(record_log_writer.roll_if_needed().await.unwrap(), 1.into());
         record_log_writer.write_record(record1).await.unwrap();
-        assert_eq!(record_log_writer.roll_if_needed().await.unwrap(), 1.into());
         record_log_writer.write_record(record2).await.unwrap();
         record_log_writer.flush().await.unwrap();
         let mut record_log_reader = RecordLogReader::open(tempdir.path()).await.unwrap();
@@ -68,8 +66,7 @@ async fn test_record_log_reader_simple() {
             Some((FileNumber::from(1u32), record2))
         );
         let mut record_log_writer = record_log_reader.into_writer().await.unwrap();
-        assert_eq!(record_log_writer.roll_if_needed().await.unwrap(), 2.into());
-        record_log_writer.flush().await.unwrap()
+        record_log_writer.flush().await.unwrap();
     }
     {
         let mut record_log_reader = RecordLogReader::open(tempdir.path()).await.unwrap();
@@ -82,9 +79,8 @@ async fn test_record_log_reader_simple() {
             Some((FileNumber::from(1u32), record2))
         );
         let mut record_log_writer = record_log_reader.into_writer().await.unwrap();
-        assert_eq!(record_log_writer.roll_if_needed().await.unwrap(), 3.into());
         record_log_writer.write_record(record3).await.unwrap();
-        record_log_writer.flush().await.unwrap()
+        record_log_writer.flush().await.unwrap();
     }
     {
         let mut record_log_reader = RecordLogReader::open(tempdir.path()).await.unwrap();

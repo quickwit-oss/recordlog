@@ -62,19 +62,19 @@ impl Header {
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FrameType {
-    FULL = 1u8,
-    FIRST = 2u8,
-    MIDDLE = 3u8,
-    LAST = 4u8,
+    Full = 1u8,
+    First = 2u8,
+    Middle = 3u8,
+    Last = 4u8,
 }
 
 impl FrameType {
     fn from_u8(b: u8) -> Option<FrameType> {
         match b {
-            1u8 => Some(FrameType::FULL),
-            2u8 => Some(FrameType::FIRST),
-            3u8 => Some(FrameType::MIDDLE),
-            4u8 => Some(FrameType::LAST),
+            1u8 => Some(FrameType::Full),
+            2u8 => Some(FrameType::First),
+            3u8 => Some(FrameType::Middle),
+            4u8 => Some(FrameType::Last),
             _ => None,
         }
     }
@@ -85,15 +85,15 @@ impl FrameType {
 
     pub fn is_first_frame_of_record(&self) -> bool {
         match self {
-            FrameType::FULL | FrameType::FIRST => true,
-            FrameType::LAST | FrameType::MIDDLE => false,
+            FrameType::Full | FrameType::First => true,
+            FrameType::Last | FrameType::Middle => false,
         }
     }
 
     pub fn is_last_frame_of_record(&self) -> bool {
         match self {
-            FrameType::FULL | FrameType::LAST => true,
-            FrameType::FIRST | FrameType::MIDDLE => false,
+            FrameType::Full | FrameType::Last => true,
+            FrameType::First | FrameType::Middle => false,
         }
     }
 }
@@ -106,10 +106,10 @@ mod tests {
     #[test]
     fn test_frame_type_serialize_deserialize() {
         const ALL_FRAME_TYPES: [FrameType; 4] = [
-            FrameType::FULL,
-            FrameType::FIRST,
-            FrameType::MIDDLE,
-            FrameType::LAST,
+            FrameType::Full,
+            FrameType::First,
+            FrameType::Middle,
+            FrameType::Last,
         ];
         for frame_type in ALL_FRAME_TYPES {
             assert_eq!(FrameType::from_u8(frame_type.to_u8()), Some(frame_type));
@@ -126,7 +126,7 @@ mod tests {
         let header = Header {
             checksum: 17u32,
             len: 42,
-            frame_type: FrameType::FULL,
+            frame_type: FrameType::Full,
         };
         let mut buffer = [0u8; HEADER_LEN];
         header.serialize(&mut buffer);

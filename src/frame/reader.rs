@@ -134,8 +134,8 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
     // This method does not consume any bytes (which is why it is called get and not read).
     async fn get_frame_header(&mut self) -> Result<Header, ReadFrameError> {
         self.ensure_bytes_available(HEADER_LEN).await?;
-        let header_bytes = &self.buffer[self.available.clone()][..HEADER_LEN];
-        match Header::deserialize(&header_bytes) {
+        let header_bytes: &[u8] = &self.buffer[self.available.clone()][..HEADER_LEN];
+        match Header::deserialize(header_bytes) {
             Some(header) => Ok(header),
             None => {
                 self.block_corrupted = true;
@@ -145,7 +145,7 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
     }
 
     // Reads the next frame.
-    pub(crate) async fn read_frame(&mut self) -> Result<(FrameType, &[u8]), ReadFrameError> {
+    pub async fn read_frame(&mut self) -> Result<(FrameType, &[u8]), ReadFrameError> {
         self.go_to_next_block_if_necessary().await?;
         let header = self.get_frame_header().await?;
         let frame_num_bytes = header.len() + HEADER_LEN;

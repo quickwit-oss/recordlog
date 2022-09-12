@@ -6,17 +6,21 @@ use crate::record::Serializable;
 pub enum Record<'a> {
     /// Adds a new record to a specific queue.
     AppendRecord {
-        position: u64,
         queue: &'a str,
+        position: u64,
         payload: &'a [u8],
     },
     /// Records the truncation of a specific queue.
-    Truncate { position: u64, queue: &'a str },
+    Truncate { queue: &'a str, position: u64 },
     /// Records the next position of a given queue.
     /// If the queue does not exists, creates it.
     ///
     /// `position` is the position of the NEXT message to be appended.
-    Touch { position: u64, queue: &'a str },
+    Touch { queue: &'a str, position: u64 },
+    DeleteQueue {
+        queue: &'a str,
+        position: u64, //< not useful tbh
+    },
 }
 
 #[repr(u8)]
@@ -25,6 +29,7 @@ enum RecordType {
     AppendRecord = 0,
     Truncate = 1,
     Touch = 2,
+    DeleteQueue = 3,
 }
 
 impl TryFrom<u8> for RecordType {
@@ -35,6 +40,7 @@ impl TryFrom<u8> for RecordType {
             0 => Ok(RecordType::AppendRecord),
             1 => Ok(RecordType::Truncate),
             2 => Ok(RecordType::Touch),
+            3 => Ok(RecordType::DeleteQueue),
             _ => Err(()),
         }
     }
@@ -72,6 +78,9 @@ impl<'a> Serializable<'a> for Record<'a> {
             Record::Touch { queue, position } => {
                 serialize(RecordType::Touch, position, queue, &[], buffer);
             }
+            Record::DeleteQueue { position, queue } => {
+                serialize(RecordType::DeleteQueue, position, queue, &[], buffer);
+            }
         }
     }
 
@@ -86,12 +95,13 @@ impl<'a> Serializable<'a> for Record<'a> {
         let payload = &buffer[11 + queue_len..];
         match enum_tag {
             RecordType::AppendRecord => Some(Record::AppendRecord {
-                position,
                 queue,
+                position,
                 payload,
             }),
-            RecordType::Truncate => Some(Record::Truncate { position, queue }),
-            RecordType::Touch => Some(Record::Touch { position, queue }),
+            RecordType::Truncate => Some(Record::Truncate { queue, position }),
+            RecordType::Touch => Some(Record::Touch { queue, position }),
+            RecordType::DeleteQueue => Some(Record::DeleteQueue { queue, position }),
         }
     }
 }
@@ -111,6 +121,6 @@ mod tests {
                 num_record_types += 1;
             }
         }
-        assert_eq!(num_record_types, 3);
+        assert_eq!(num_record_types, 4);
     }
 }

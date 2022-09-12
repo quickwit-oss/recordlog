@@ -1,9 +1,10 @@
 use std::ops::{Bound, RangeBounds};
 
 use crate::error::AppendError;
+use crate::error::TouchError;
 use crate::position::FileNumber;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct RecordMeta {
     start_offset: usize,
     file_number: FileNumber,
@@ -15,18 +16,33 @@ pub struct MemQueue {
     concatenated_records: Vec<u8>,
     start_position: u64,
     record_metas: Vec<RecordMeta>,
+    last_touch: Option<FileNumber>,
 }
 
 impl MemQueue {
-    pub fn with_next_position(next_position: u64) -> Self {
+    pub fn with_next_position(next_position: u64, last_touch: FileNumber) -> Self {
         MemQueue {
             concatenated_records: Vec::new(),
             start_position: next_position,
             record_metas: Vec::new(),
+            last_touch: Some(last_touch),
         }
     }
     pub fn first_retained_position(&self) -> Option<FileNumber> {
-        Some(self.record_metas.first()?.file_number)
+        Some(self.record_metas.first()?.file_number.clone())
+    }
+
+    pub fn touch(&mut self, file_number: FileNumber, start_position: u64) -> Result<(), TouchError> {
+        if self.is_empty() && self.start_position == 0 {
+            self.start_position = start_position;
+            self.last_touch = Some(file_number);
+            return Ok(());
+        }
+        if self.start_position == start_position {
+            self.last_touch = Some(file_number);
+            return Ok(())
+        }
+        Err(TouchError)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -38,8 +54,8 @@ impl MemQueue {
         self.start_position + self.record_metas.len() as u64
     }
 
-    /// Returns true iff the record was effectively added.
-    /// False if the record was added in the previous call.
+    /// Appends a new record at a given position.
+    /// Returns an error if the record was not added.
     ///
     /// AppendError if the record is strangely in the past or is too much in the future.
     pub fn append_record(
@@ -48,6 +64,14 @@ impl MemQueue {
         target_position: u64,
         payload: &[u8],
     ) -> Result<(), AppendError> {
+        let next_position = self.next_position();
+        if next_position != 0 && next_position != target_position {
+            if target_position > next_position {
+                return Err(AppendError::Future);
+            } else {
+                return Err(AppendError::Past);
+            }
+        }
         if self.start_position == 0u64 && self.record_metas.is_empty() {
             self.start_position = target_position;
         }
@@ -65,13 +89,13 @@ impl MemQueue {
             return Some(0);
         }
         let idx = (position - self.start_position) as usize;
-        if idx > self.record_metas.len() {
+        if idx >= self.record_metas.len() {
             return None;
         }
         Some(idx as usize)
     }
 
-    pub fn range<'a, R>(&'a self, range: R) -> impl Iterator<Item = (u64, &'a [u8])> + 'a
+    pub fn range<R>(&self, range: R) -> impl Iterator<Item = (u64, &[u8])> + '_
     where R: RangeBounds<u64> + 'static {
         let start_idx: usize = match range.start_bound() {
             Bound::Included(&start_from) => self
@@ -114,8 +138,8 @@ impl MemQueue {
             if let Some(first_record_to_keep) = self.position_to_idx(truncate_up_to_pos + 1) {
                 first_record_to_keep
             } else {
-                // clear the queue.
-                self.start_position = self.start_position + self.record_metas.len() as u64;
+                // clear the queue entirely
+                self.start_position = self.next_position();
                 self.concatenated_records.clear();
                 self.record_metas.clear();
                 return;
@@ -126,6 +150,6 @@ impl MemQueue {
             record_meta.start_offset -= start_offset_to_keep;
         }
         self.concatenated_records.drain(..start_offset_to_keep);
-        self.start_position = self.start_position + first_record_to_keep as u64;
+        self.start_position += first_record_to_keep as u64;
     }
 }

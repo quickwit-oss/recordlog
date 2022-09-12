@@ -19,7 +19,22 @@ impl From<AlreadyExists> for CreateQueueError {
     }
 }
 
-#[derive(Debug)]
+#[derive(Error, Debug)]
+pub enum DeleteQueueError {
+    #[error("Missing queue")]
+    MissingQueue(String),
+    #[error("Io error: {0}")]
+    IoError(#[from] io::Error),
+}
+
+impl From<MissingQueue> for DeleteQueueError {
+    fn from(missing_queue: MissingQueue) -> Self {
+        DeleteQueueError::MissingQueue(missing_queue.0)
+    }
+}
+
+#[derive(Debug, Error)]
+#[error("TouchError")]
 pub struct TouchError;
 
 #[derive(Error, Debug)]
@@ -28,6 +43,10 @@ pub enum TruncateError {
     MissingQueue(String),
     #[error("Io error: {0}")]
     IoError(#[from] io::Error),
+    #[error("Touch error: {0}")]
+    TouchError(#[from] TouchError),
+    #[error("Future position forbidden")]
+    Future,
 }
 
 impl From<MissingQueue> for TruncateError {

@@ -18,7 +18,6 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 use std::io;
-use std::ops::RangeTo;
 
 use tokio::fs::File;
 use tokio::io::BufWriter;
@@ -31,7 +30,7 @@ use crate::rolling::record::Record;
 use crate::rolling::Directory;
 
 pub struct RecordLogWriter {
-    record_writer_opt: Option<RecordWriter<BufWriter<File>>>,
+    record_writer: RecordWriter<BufWriter<File>>,
     directory: super::Directory,
 }
 
@@ -44,66 +43,55 @@ async fn new_record_writer(directory: &mut Directory) -> io::Result<RecordWriter
 
 impl RecordLogWriter {
     async fn open_new_file(&mut self) -> io::Result<()> {
-        if let Some(mut record_writer) = self.record_writer_opt.take() {
-            record_writer.flush().await?;
-            record_writer
-                .get_underlying_wrt()
-                .get_mut()
-                .sync_all()
-                .await?;
-        }
-        self.record_writer_opt = Some(new_record_writer(&mut self.directory).await?);
+        self.record_writer.flush().await?;
+        self.record_writer
+            .get_underlying_wrt()
+            .get_mut()
+            .sync_all()
+            .await?;
+        self.record_writer = new_record_writer(&mut self.directory).await?;
         Ok(())
     }
 
-    pub fn num_files(&self) -> usize {
-        self.directory.num_files()
+    #[cfg(test)]
+    pub fn first_last_files(&self) -> Option<(u32, u32)> {
+        self.directory.first_last_files()
     }
 
-    pub fn open(directory: Directory) -> Self {
-        RecordLogWriter {
+    pub fn current_file(&self) -> FileNumber {
+        self.directory.last_file_number()
+    }
+
+    pub async fn open(mut directory: Directory) -> io::Result<Self> {
+        let record_writer = new_record_writer(&mut directory).await?;
+        Ok(RecordLogWriter {
             directory,
-            record_writer_opt: None,
-        }
+            record_writer,
+        })
     }
 
     fn need_new_file(&self) -> bool {
-        if let Some(record_writer) = self.record_writer_opt.as_ref() {
-            record_writer.num_bytes_written() >= LIMIT_NUM_BYTES
-        } else {
-            true
-        }
-    }
-
-    /// Returns the file number that will be used for the next append record.
-    ///
-    /// If needed, this may create new file.
-    pub async fn roll_if_needed(&mut self) -> io::Result<FileNumber> {
-        if self.need_new_file() {
-            self.open_new_file().await?;
-        }
-        Ok(self.directory.last_file_number())
+        self.record_writer.num_bytes_written() >= LIMIT_NUM_BYTES
     }
 
     pub async fn write_record(&mut self, record: Record<'_>) -> io::Result<()> {
-        let record_writer = self
-            .record_writer_opt
-            .as_mut()
-            .expect("Roll if needed should have been called before");
-        record_writer.write_record(record).await?;
+        if self.need_new_file() {
+            self.open_new_file().await?;
+        }
+        self.record_writer.write_record(record).await?;
         Ok(())
     }
 
     /// Remove files that only contain records <= position.
-    pub async fn truncate(&mut self, file_to_remove: RangeTo<FileNumber>) -> io::Result<()> {
-        self.directory.remove_files(file_to_remove).await?;
+    pub async fn gc(&mut self) -> io::Result<()> {
+        self.directory.gc().await?;
         Ok(())
     }
 
+    /// Flush in-memory buffer to the OS, and may call fsync or not depending on some
+    /// policy.
     pub async fn flush(&mut self) -> io::Result<()> {
-        if let Some(record_writer) = self.record_writer_opt.as_mut() {
-            record_writer.flush().await?;
-        }
+        self.record_writer.flush().await?;
         // TODO add file-sync according to some sync policy
         Ok(())
     }

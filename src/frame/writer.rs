@@ -37,7 +37,7 @@ impl<W: AsyncWrite + Unpin> FrameWriter<W> {
         assert!(record_len <= BLOCK_LEN);
         let (buffer_header, buffer_record) = self.buffer[..record_len].split_at_mut(HEADER_LEN);
         buffer_record.copy_from_slice(payload);
-        Header::for_payload(frame_type, &payload).serialize(buffer_header);
+        Header::for_payload(frame_type, payload).serialize(buffer_header);
         self.current_block_len = (self.current_block_len + record_len) % BLOCK_LEN;
         self.wrt.write_all(&self.buffer[..record_len]).await?;
         self.num_bytes_written += record_len as u64;

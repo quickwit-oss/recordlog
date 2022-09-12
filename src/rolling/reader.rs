@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::io;
 use std::path::Path;
 
@@ -11,16 +10,16 @@ use crate::rolling::{Directory, RecordLogWriter};
 
 pub struct RecordLogReader {
     directory: Directory,
-    file_numbers: VecDeque<FileNumber>,
+    file_number: Option<FileNumber>,
     reader_opt: Option<(FileNumber, RecordReader<File>)>,
 }
 
 impl RecordLogReader {
     pub async fn open(dir_path: &Path) -> io::Result<Self> {
         let directory = Directory::open(dir_path).await?;
-        let file_numbers = directory.file_numbers().collect();
+        let first_file_number = directory.first_file_number().cloned();
         Ok(RecordLogReader {
-            file_numbers,
+            file_number: first_file_number,
             directory,
             reader_opt: None,
         })
@@ -32,7 +31,7 @@ impl RecordLogReader {
             !self.go_next_record().await?,
             "`into_writer` should only be called after the reader has been entirely consumed"
         );
-        Ok(RecordLogWriter::open(self.directory.into()))
+        Ok(RecordLogWriter::open(self.directory).await?)
     }
 
     async fn go_next_record_current_reader(&mut self) -> Result<bool, ReadRecordError> {
@@ -55,23 +54,24 @@ impl RecordLogReader {
     }
 
     async fn load_next_file(&mut self) -> io::Result<bool> {
-        if let Some(next_file_number) = self.file_numbers.pop_front() {
-            let next_file = self.directory.open_file(next_file_number).await?;
+        if let Some(file_number) = self.file_number.take() {
+            let next_file = self.directory.open_file(file_number.clone()).await?;
             let record_reader = RecordReader::open(next_file);
-            self.reader_opt = Some((next_file_number, record_reader));
+            self.file_number = file_number.next();
+            self.reader_opt = Some((file_number, record_reader));
             Ok(true)
         } else {
             Ok(false)
         }
     }
 
-    pub(crate) async fn read_record<'a>(
-        &'a mut self,
-    ) -> Result<Option<(FileNumber, Record<'a>)>, ReadRecordError> {
+    pub(crate) async fn read_record(
+        &mut self,
+    ) -> Result<Option<(FileNumber, Record<'_>)>, ReadRecordError> {
         if self.go_next_record().await? {
             let (file_number, record_reader) = self.reader_opt.as_ref().unwrap();
-            let record: Record<'a> = record_reader.record().ok_or(ReadRecordError::Corruption)?;
-            Ok(Some((*file_number, record)))
+            let record: Record<'_> = record_reader.record().ok_or(ReadRecordError::Corruption)?;
+            Ok(Some((file_number.clone(), record)))
         } else {
             Ok(None)
         }
